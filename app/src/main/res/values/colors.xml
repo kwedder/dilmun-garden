@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="bg">#FF080C11</color>
+    <color name="plate">#FF0E151D</color>
+    <color name="steel">#FFA9C2D6</color>
+    <color name="amber">#FFD9A441</color>
+    <color name="blue">#FF6FA8DC</color>
+</resources>

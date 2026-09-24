@@ -1,0 +1,765 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Dilmun Portal Map</title>
+<style>
+  [hidden]{display:none!important}
+  :root{
+    color-scheme: dark;
+    --bg:#080C11; --ink:#DCE4EC; --muted:#8393A3; --faint:#4B5A69;
+    --surface:rgba(14,21,29,.86); --line:#223040;
+    --steel:#A9C2D6; --human:#6FA8DC; --agent:#D9A441; --dream:#9C8CE0;
+    --display:"Newsreader", Georgia, "Times New Roman", serif;
+    --body:"Hanken Grotesk", "Segoe UI", system-ui, -apple-system, Helvetica, Arial, sans-serif;
+    --mono:"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  html,body{height:100%}
+  body{background:var(--bg); color:var(--ink); font-family:var(--body); font-size:14px; overflow:hidden}
+  #app{position:fixed; inset:0}
+  #stage{position:absolute; inset:0; touch-action:none; cursor:grab}
+  #stage.dragging{cursor:grabbing}
+  #stage.hovering{cursor:pointer}
+  canvas{display:block}
+  #tags{position:absolute; inset:0; pointer-events:none; overflow:hidden}
+  .tag{position:absolute; left:0; top:0; transform:translate(-50%,-100%); white-space:nowrap;
+    font:500 10.5px/1 var(--mono); letter-spacing:.04em; color:var(--muted); padding:4px 6px;
+    pointer-events:auto; cursor:pointer; border-radius:3px; transition:color .2s, opacity .2s, background .2s;
+    background:rgba(8,12,17,.55); border:0}
+  .tag:hover,.tag:focus-visible{color:var(--ink); outline:none; background:rgba(34,48,64,.8)}
+  .tag.on{color:var(--ink)}
+  .tag.dim{opacity:.35}
+  .tag.small{font-size:9.5px}
+
+  header{position:absolute; top:calc(16px + env(safe-area-inset-top,0px)); left:16px; right:16px; pointer-events:none;
+    display:flex; flex-direction:column; gap:4px; max-width:420px}
+  header h1{margin:0; font:600 26px/1.05 var(--display); letter-spacing:-.01em; text-wrap:balance}
+  header p{margin:0; color:var(--muted); font-size:13px}
+  header .hint{font:400 11px/1.4 var(--mono); color:var(--faint); letter-spacing:.02em}
+
+  .controls{position:absolute; left:16px; bottom:calc(16px + env(safe-area-inset-bottom,0px)); display:flex; flex-wrap:wrap; gap:8px}
+  button{font:500 12.5px/1 var(--body); color:var(--ink); background:var(--surface); border:1px solid var(--line);
+    border-radius:6px; padding:9px 12px; cursor:pointer; backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px)}
+  button:hover{border-color:#3A4B5C}
+  button:focus-visible{outline:2px solid var(--steel); outline-offset:2px}
+  button[aria-pressed="true"]{border-color:var(--steel); color:#fff}
+
+  #panel{position:absolute; top:calc(16px + env(safe-area-inset-top,0px)); right:16px; width:340px; max-height:calc(100% - 32px - env(safe-area-inset-top,0px) - env(safe-area-inset-bottom,0px));
+    overflow:auto; background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:18px 18px 16px;
+    backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); display:flex; flex-direction:column; gap:12px}
+  #panel .top{display:flex; align-items:flex-start; justify-content:space-between; gap:12px}
+  #panel .kicker{font:500 10.5px/1.3 var(--mono); letter-spacing:.08em; text-transform:uppercase; color:var(--muted)}
+  #panel h2{margin:4px 0 0; font:600 22px/1.15 var(--display); text-wrap:balance}
+  #panel .live{font:500 11.5px/1.45 var(--mono); color:#C9D6E2; background:rgba(34,48,64,.45); border-radius:6px; padding:8px 10px}
+  #panel .swatch{display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:8px; vertical-align:1px}
+  #panel p{margin:0; line-height:1.55; color:#C3CDD7}
+  #panel ul{margin:0; padding-left:0; list-style:none; display:flex; flex-direction:column; gap:6px}
+  #panel li{position:relative; padding-left:14px; line-height:1.45; color:#B7C2CD; font-size:13px}
+  #panel li::before{content:""; position:absolute; left:0; top:.62em; width:5px; height:1px; background:var(--muted)}
+  #panel .sec{font:500 10.5px/1 var(--mono); letter-spacing:.08em; text-transform:uppercase; color:var(--faint); margin-top:2px}
+  .chips{display:flex; flex-wrap:wrap; gap:6px}
+  .chip{font:500 11.5px/1 var(--body); padding:6px 8px; border-radius:4px; background:rgba(34,48,64,.55); border:1px solid transparent; color:var(--ink)}
+  .chip:hover{border-color:#3A4B5C}
+  .chip .n{font-family:var(--mono); color:var(--muted); margin-right:5px}
+  #close{padding:6px 9px; font-size:15px; line-height:1}
+  .inv{display:flex; flex-direction:column; gap:4px}
+  .inv button{display:grid; grid-template-columns:26px 1fr; gap:6px; text-align:left; background:transparent; border:1px solid transparent; padding:8px 6px; border-radius:6px; line-height:1.35; backdrop-filter:none}
+  .inv button:hover{background:rgba(34,48,64,.4)}
+  .inv button[aria-pressed="true"]{background:rgba(34,48,64,.7); border-color:var(--line)}
+  .inv .n{font:500 11px/1.35 var(--mono); color:var(--muted); padding-top:1px}
+  .inv .t{font-weight:600}
+  .inv .d{grid-column:2; color:#AEB9C4; font-weight:400; font-size:12.5px}
+  .foot{font:400 11px/1.5 var(--mono); color:var(--faint)}
+
+  #walk{position:absolute; left:50%; transform:translateX(-50%); bottom:calc(16px + env(safe-area-inset-bottom,0px)); width:min(560px, calc(100% - 32px));
+    background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:12px 12px 12px 16px;
+    backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); display:grid; grid-template-columns:1fr auto; gap:10px; align-items:center}
+  #walk .count{font:500 10.5px/1 var(--mono); color:var(--muted); letter-spacing:.06em}
+  #walk .title{font:600 16px/1.2 var(--display); margin-top:4px}
+  #walk .text{color:#B7C2CD; line-height:1.45; font-size:13px; margin-top:4px}
+  #walk .btns{display:flex; gap:6px}
+  #walk .btns button{padding:8px 10px}
+  .bar{grid-column:1 / -1; height:2px; background:var(--line); border-radius:2px; overflow:hidden}
+  .bar i{display:block; height:100%; width:0; background:var(--steel); transition:width .3s}
+
+  @media (max-width:720px){
+    header h1{font-size:22px}
+    header .hint{display:none}
+    #panel{top:auto; bottom:calc(64px + env(safe-area-inset-bottom,0px)); left:16px; right:16px; width:auto; max-height:48%}
+    #walk{bottom:calc(64px + env(safe-area-inset-bottom,0px))}
+    .controls{left:16px; right:16px}
+  }
+  @media (prefers-reduced-motion: reduce){ .bar i{transition:none} }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <div id="stage" aria-label="Interactive 3D map of the Dilmun portal Android app. Every part can also be reached with the labels, which are buttons."></div>
+  <div id="tags"></div>
+  <header>
+    <h1>System map</h1>
+    <p>This portal, part by part</p>
+    <span class="hint">drag to orbit · scroll or pinch to zoom · tap any part</span>
+  </header>
+  <div class="controls">
+    <button id="btnWalk" aria-pressed="false">Follow a question</button>
+    <button id="btnInv" aria-pressed="false">Invariants</button>
+    <button id="btnReset">Reset view</button>
+  </div>
+  <aside id="panel" hidden aria-live="polite"></aside>
+  <div id="walk" hidden>
+    <div>
+      <div class="count" id="wCount"></div>
+      <div class="title" id="wTitle"></div>
+      <div class="text" id="wText"></div>
+    </div>
+    <div class="btns">
+      <button id="wPrev" aria-label="Previous step">‹</button>
+      <button id="wPlay" aria-label="Pause">❚❚</button>
+      <button id="wNext" aria-label="Next step">›</button>
+      <button id="wClose" aria-label="Stop the walkthrough">✕</button>
+    </div>
+    <div class="bar"><i id="wBar"></i></div>
+  </div>
+</div>
+
+<script src="three.min.js"></script>
+<script>
+(function(){
+"use strict";
+const reduced = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+/* live numbers from the app, sent by the page that embeds this map */
+let LIVE = null, running = true;
+function liveLine(id){
+  const s = LIVE; if (!s) return null;
+  const n = (x, one, many) => x + " " + (x === 1 ? one : many);
+  switch (id){
+    case "store": return "On this device: " + n(s.txs, "transaction", "transactions") + " · state " + s.state;
+    case "culture": return "On this device: " + n(s.culture, "settled fact", "settled facts");
+    case "episodes": return "On this device: " + n(s.results, "result", "results");
+    case "map": return "On this device: " + n(s.sources, "source", "sources") + " mapped";
+    case "registry": return "On this device: " + s.skill + " · tools " + (s.tools || []).join(", ");
+    case "arbiters": return "On this device: " + n(s.open, "open directive", "open directives") + (s.paused ? " · paused by the steward" : "") + (s.frozen ? " · frozen after a fork" : "");
+    case "agent": return "In this build: " + s.agent + ". It reads lines like \"aspirin | treats | fever\". The model slot comes next.";
+    case "model": return "In this build: no model file yet.";
+    case "keystore": return "This portal: " + s.portal;
+    case "ledger": return "On this device: " + n(s.held, "fact", "facts") + " held for approval";
+    case "portals": return "Sync arrives in a later build.";
+    case "human": return s.paused ? "You have paused the arbiters." : null;
+    default: return null;
+  }
+}
+window.addEventListener("message", ev => {
+  const d = ev.data || {};
+  if (d.type === "stats"){ LIVE = d.stats; if (typeof selected !== "undefined" && selected) renderInfo(selected); }
+  if (d.type === "visible"){ const was = running; running = !!d.visible; if (running && !was){ last = performance.now(); requestAnimationFrame(frame); } }
+});
+
+/* ------------------------------------------------------------ content */
+const ROLE = { core:0xA9C2D6, steer:0x6F9CC4, human:0x6FA8DC, agent:0xD9A441, dream:0x9C8CE0, dim:0x56697C, key:0xDCE4EC };
+const CSS = { core:"#A9C2D6", steer:"#6F9CC4", human:"#6FA8DC", agent:"#D9A441", dream:"#9C8CE0", dim:"#56697C", key:"#DCE4EC" };
+
+const INFO = {
+  device:{ name:"Android device", role:"core", kicker:"hardware",
+    desc:"Everything inside the glass case runs in one app on one device. Nothing needs a server; the portal works offline and syncs when it can.",
+    facts:["Holds the app, the model file and the store","Any phone or tablet with enough memory for a 1B model in 4-bit"] },
+  ui:{ name:"App screens", role:"core", kicker:"interface",
+    desc:"Import, Ask, Timeline, Review and Graph. The screens never write to the log themselves; they hand every request to the arbiters.",
+    facts:["Import: add books and folders as sources","Ask: send a question, get facts with their quotes","Timeline: the log as it grew","Review: the D-space and items held for approval","Graph: browse entities and links"] },
+  arbiters:{ name:"Arbiters", role:"key", kicker:"fixed rules · foreground service",
+    desc:"They turn a question into directives, deploy the agent, check what comes back and commit one signed transaction per result. Their state is never saved on its own: at every startup they rebuild it by replaying the log.",
+    facts:["State: open directives, limits, pending approvals, pause, policy version","Quotes must match the source exactly","Tools must be allowed by the skill: the pinned version, narrowed by the current one","A result stops at its budget; no run after expiry","Nothing happens while paused, or after this portal's chain forks"] },
+  agent:{ name:"Agent", role:"agent", kicker:"the local model · proposes only",
+    desc:"MiniCPM5-1B in 4-bit, run once per directive. It reads the one source its directive names and returns proposed facts with quotes. It holds no key the store trusts, so nothing it writes reaches the log directly.",
+    facts:["Loads when the first directive needs it, unloads when idle","Keeps nothing between runs","Its raw output is recorded; replay never calls it again"] },
+  source:{ name:"Source", role:"steer", kicker:"variable · set by each directive",
+    desc:"A book database or files on the device today, whitelisted websites later. The agent may read only the source its directive names, and only if the workspace map has it with the same content hash.",
+    facts:["Changed since the directive? The run is refused until a rescan"] },
+  model:{ name:"Model file", role:"agent", kicker:"downloaded once",
+    desc:"MiniCPM5-1B by default, LFM2.5 as the alternate. Checked against its hash on download, and named on every result it produced, so you can always tell which model said what.",
+    facts:["Recorded as modelHash on each result"] },
+  web:{ name:"Web", role:"dim", kicker:"later",
+    desc:"Whitelisted sites only, cached as sources before any agent reads them. Stays off until the allowlist policy is decided.",
+    facts:[] },
+  store:{ name:"Store", role:"core", kicker:"SQLite · append-only",
+    desc:"One log of signed, hash-chained transactions. Memory, permissions and history are all derived from it. Nothing is edited in place; only a steward-signed excision removes content, and the headers survive it.",
+    facts:["Datoms indexed four ways: EAVT, AEVT, AVET, VAET","FTS5 for BM25 over quotes and notes","Materialized K, rebuilt if a fork proof arrives","Snapshots for a fast startup"] },
+  registry:{ name:"Skill registry", role:"steer", kicker:"steers every run",
+    desc:"Which tools each skill may use, by version. The steward publishes versions and a published version never changes. A directive pins one; tightening applies at once, loosening needs a new directive.",
+    facts:[] },
+  map:{ name:"Workspace map", role:"steer", kicker:"steers every run",
+    desc:"What each source on this device holds, as content hashes, kept current by the scanner. A directive can only name a mapped source, and records the hash it saw.",
+    facts:["The Android version of the Obsidian folder map"] },
+  schema:{ name:"Schema", role:"core", kicker:"steward-signed · versioned",
+    desc:"Attributes are data. Each one declares one or many values, whether it is a unique identity, and whether it is a claim settled by evidence or a state settled by valid time.",
+    facts:["Same identity, same entity, on every portal"] },
+  episodes:{ name:"Episodes", role:"core", kicker:"quarantine",
+    desc:"One per directive: the model's proposal exactly as returned, and the facts that passed the checks. Their contents stay on this device; other portals get only the headers.",
+    facts:["A device restored from an old backup loses contents written after it (open decision)"] },
+  culture:{ name:"Culture · K", role:"key", kicker:"settled memory",
+    desc:"Only the promotion gate writes here. It copies a fact once k distinct sources agree, or the steward approves it. A retracted fact needs fresh evidence to return. Queries and new directives read from here.",
+    facts:["K = C∘F: filter, then resolve conflicts by a content-only order"] },
+  dspace:{ name:"D-space", role:"dream", kicker:"dream journal",
+    desc:"Overnight, the dream cycle joins culture facts into hypotheses. They are labelled as dreams, rank below every observation and never trigger an action. You review them in the app.",
+    facts:["Running it twice changes nothing"] },
+  ledger:{ name:"Decisions and proofs", role:"dim", kicker:"in the log",
+    desc:"Every promotion and refusal, retraction, expiry, excision tombstone and fork proof. Facts are named by hash, so an excision leaves nothing readable behind.",
+    facts:[] },
+  background:{ name:"Background work", role:"dim", kicker:"WorkManager",
+    desc:"Runs when the phone allows it: the dream cycle while charging and idle, the scanner that keeps the workspace map current, and sync when a network is there.",
+    facts:["The scanner and expiry keep running while paused"] },
+  keystore:{ name:"Android Keystore", role:"dim", kicker:"signing key",
+    desc:"Holds this portal's signing key. Every transaction the arbiters commit is signed with it. The key never enters the model's context.",
+    facts:[] },
+  portals:{ name:"Other portals", role:"core", kicker:"sync",
+    desc:"Other devices running the app. They exchange signed transactions: fork proofs first, then the steward's, then the rest. Merge is set union plus a fixed replay order, so every portal converges whatever order it syncs in.",
+    facts:["Episode contents stay on the device that made them"] },
+  human:{ name:"Human · steward", role:"human", kicker:"you",
+    desc:"Asks questions, approves held promotions and reviews the D-space. The only one who can change the schema, publish skills, excise or pause. Signs with their own key.",
+    facts:[] }
+};
+
+const INVARIANTS = [
+  [1,"Append-only","Nothing is changed in place. Only a steward-signed excision removes content, and headers survive it.",["store","ledger"]],
+  [2,"One signed transaction per fact","Every datom belongs to exactly one transaction, and every signature verifies.",["store","keystore"]],
+  [3,"Deterministic replay","The same transactions rebuild the same state, whatever order they are read in.",["arbiters","store"]],
+  [4,"The model never commits","Only arbiter code signs. Anything the agent signs is refused.",["agent","arbiters","keystore"]],
+  [5,"Recorded, never re-run","The model's raw output is stored. Replay reads it and never calls the model.",["agent","episodes"]],
+  [6,"Culture only through the gate","Promotion copies a fact into culture. The original stays in its episode.",["episodes","culture"]],
+  [7,"Dreams stay below","Hypotheses rank under every observation and never trigger an action.",["dspace","culture","arbiters"]],
+  [8,"Deterministic identity","The same identity gives the same entity on every portal.",["schema","portals"]],
+  [9,"Repeatable queries","A database value pinned by each portal's chain head gives the same answer every time.",["store","culture"]],
+  [10,"Order-independence","Portals converge whatever order they sync in.",["portals","store"]],
+  [11,"Steward-only powers","Only the steward changes the schema, publishes skills, approves held items, excises or pauses.",["human","schema","registry","ledger"]],
+  [12,"Forks are caught","Two branches of one portal's chain are proven, both stop counting, and every portal converges.",["portals","ledger","keystore"]],
+  [13,"Registry and map steer every run","Tools come from the skill's versions; the source was mapped with the same hash.",["registry","map","arbiters","source"]],
+  [14,"A directive ends once","One result before expiry and within budget, or one expiry after it.",["arbiters","ledger"]]
+];
+
+const STEPS = [
+  ["Ask","You ask a question in the app.",["q"],"ui"],
+  ["Hand to the arbiters","The screen passes it on. It writes nothing itself.",["h"],"arbiters"],
+  ["Steer","The arbiters choose a skill from the registry and a source from the workspace map.",["s1","s2"],"arbiters"],
+  ["Directive","A directive is committed: skill version, source hash, budget, expiry. The agent is deployed with it.",["d"],"agent"],
+  ["Load the model","The first directive loads the model file into memory.",["m"],"agent"],
+  ["Read","The agent reads only the source its directive names.",["r"],"source"],
+  ["Propose","It returns proposed facts, each with an exact quote.",["p"],"arbiters"],
+  ["Check and commit","Quotes, schema, tools and budget are checked. One signed transaction lands in an episode.",["c","k"],"episodes"],
+  ["Promote","When k distinct sources agree, the gate copies the fact into culture.",["g"],"culture"],
+  ["Dream","While the phone charges overnight, the dream cycle writes hypotheses to the D-space.",["bg","dr"],"dspace"],
+  ["Review","You see the answer, the D-space and anything held for your approval.",["rv","a"],"ui"],
+  ["Sync","When a network is there, portals exchange signed transactions and converge.",["sy1","sy2"],"portals"]
+];
+
+/* ------------------------------------------------------------ three setup */
+const stage = document.getElementById("stage");
+const panel = document.getElementById("panel");
+const tagsEl = document.getElementById("tags");
+let renderer;
+try {
+  renderer = new THREE.WebGLRenderer({ antialias:true });
+} catch(e) {
+  stage.innerHTML = '<p style="padding:120px 16px;color:#8393A3">This map needs WebGL, which this browser has turned off.</p>';
+  return;
+}
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.setClearColor(0x080C11, 1);
+stage.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0x080C11, 26, 58);
+const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 200);
+
+const E = {};          // element id → { pos, mats:[{m,base}], fills:[{m,base}], tag }
+const pickables = [];
+
+function lineMat(color, opacity, dashed){
+  const m = dashed
+    ? new THREE.LineDashedMaterial({ color, transparent:true, opacity, dashSize:.14, gapSize:.1 })
+    : new THREE.LineBasicMaterial({ color, transparent:true, opacity });
+  return m;
+}
+function fillMat(color, opacity){
+  return new THREE.MeshBasicMaterial({ color, transparent:true, opacity, depthWrite:false });
+}
+function reg(id, pos, tagOffset, opts){
+  opts = opts || {};
+  E[id] = E[id] || { id, pos:pos.clone(), mats:[], fills:[], priority: opts.priority || 0 };
+  E[id].tagPos = pos.clone().add(tagOffset || new THREE.Vector3(0,.5,0));
+  E[id].small = !!opts.small;
+  return E[id];
+}
+function addSolid(id, geo, pos, color, o){
+  o = o || {};
+  const el = E[id];
+  const fill = new THREE.Mesh(geo, fillMat(o.fillColor || 0x0E151D, o.fill == null ? .6 : o.fill));
+  fill.position.copy(pos);
+  fill.userData.id = id;
+  scene.add(fill);
+  pickables.push(fill);
+  el.fills.push({ m:fill.material, base:fill.material.opacity });
+  const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geo, 25), lineMat(color, o.line == null ? .85 : o.line, o.dashed));
+  edges.position.copy(pos);
+  if (o.dashed) edges.computeLineDistances();
+  scene.add(edges);
+  el.mats.push({ m:edges.material, base:edges.material.opacity });
+  return fill;
+}
+function roundedSlab(w, d, h, r){
+  const s = new THREE.Shape(), x = -w/2, y = -d/2;
+  s.moveTo(x+r, y); s.lineTo(x+w-r, y); s.quadraticCurveTo(x+w, y, x+w, y+r);
+  s.lineTo(x+w, y+d-r); s.quadraticCurveTo(x+w, y+d, x+w-r, y+d);
+  s.lineTo(x+r, y+d); s.quadraticCurveTo(x, y+d, x, y+d-r);
+  s.lineTo(x, y+r); s.quadraticCurveTo(x, y, x+r, y);
+  const g = new THREE.ExtrudeGeometry(s, { depth:h, bevelEnabled:false, curveSegments:6 });
+  g.rotateX(-Math.PI/2); g.translate(0, -h/2, 0);
+  return g;
+}
+const V = (x,y,z) => new THREE.Vector3(x,y,z);
+
+/* ground */
+const grid = new THREE.PolarGridHelper(16, 16, 6, 64, 0x16202B, 0x121A23);
+grid.position.y = -0.6;
+grid.material.transparent = true; grid.material.opacity = .7;
+scene.add(grid);
+
+/* device */
+reg("device", V(0,0,0), V(0,-.2,2.75));
+addSolid("device", roundedSlab(7.6, 4.8, .32, .55), V(0,0,0), 0x3A4B5C, { fill:.9, line:.9 });
+{ // screen outline + camera dot
+  const g = roundedSlab(7.0, 4.2, .01, .38);
+  const l = new THREE.LineSegments(new THREE.EdgesGeometry(g, 25), lineMat(0x2A3846, .9));
+  l.position.set(0,.17,0); scene.add(l); E.device.mats.push({ m:l.material, base:.9 });
+  const dot = new THREE.Mesh(new THREE.CircleGeometry(.07, 16), new THREE.MeshBasicMaterial({ color:0x2A3846 }));
+  dot.rotation.x = -Math.PI/2; dot.position.set(0,.18,-2.25); scene.add(dot);
+}
+/* glass case: faint verticals from the device up to the screens layer */
+{
+  const pts = [];
+  [[-3.4,-2.0],[3.4,-2.0],[-3.4,2.0],[3.4,2.0]].forEach(([x,z]) => { pts.push(V(x,.2,z), V(x,8.7,z)); });
+  const g = new THREE.BufferGeometry().setFromPoints(pts);
+  const l = new THREE.LineSegments(g, lineMat(0x1C2733, .9));
+  scene.add(l);
+}
+
+/* layers, top to bottom */
+reg("ui", V(0,8.2,0), V(-3.95,.1,1.5));
+addSolid("ui", new THREE.BoxGeometry(6.4,.12,3.2), V(0,8.2,0), ROLE.core, { fill:.45, line:.7 });
+[-2.4,-1.2,0,1.2,2.4].forEach(x => addSolid("ui", new THREE.BoxGeometry(.95,.05,.55), V(x,8.3,.2), ROLE.core, { fill:.5, line:.55 }));
+
+reg("arbiters", V(0,6.8,0), V(-3.95,.1,1.5));
+addSolid("arbiters", new THREE.BoxGeometry(6.4,.22,3.2), V(0,6.8,0), ROLE.key, { fill:.55, line:1 });
+
+reg("source", V(-1.7,5.3,0), V(0,.55,0), { priority:1 });
+addSolid("source", new THREE.BoxGeometry(2.3,.55,1.6), V(-1.7,5.3,0), ROLE.steer, { fill:.35, line:.95, dashed:true });
+reg("agent", V(1.7,5.3,0), V(0,.55,0), { priority:1 });
+addSolid("agent", new THREE.BoxGeometry(2.3,.55,1.6), V(1.7,5.3,0), ROLE.agent, { fill:.55, line:1, fillColor:0x1E170B });
+
+reg("store", V(0,3.4,0), V(-4.15,.1,1.9));
+addSolid("store", new THREE.BoxGeometry(6.8,.22,4.0), V(0,3.4,0), ROLE.core, { fill:.55, line:.85 });
+const TY = 3.62;
+function tile(id, x, z, color, fillColor, fill){
+  reg(id, V(x,TY,z), V(0,.33,0), { priority:1, small:true });
+  addSolid(id, new THREE.BoxGeometry(1.75,.2,1.0), V(x,TY,z), color, { fill: fill == null ? .7 : fill, line:.95, fillColor: fillColor || 0x0E151D });
+}
+tile("registry",-2.15,-1.1, ROLE.steer, 0x13263B, .85);
+tile("map",      0,   -1.1, ROLE.steer, 0x13263B, .85);
+tile("schema",   2.15,-1.1, ROLE.core);
+tile("episodes",-2.15, .25, ROLE.core);
+tile("culture",  0,    .25, ROLE.key, 0x121C26, .85);
+tile("dspace",   2.15, .25, ROLE.dream, 0x17132A, .85);
+reg("ledger", V(0,3.57,1.45), V(0,.25,.05), { priority:1, small:true });
+addSolid("ledger", new THREE.BoxGeometry(6.2,.1,.42), V(0,3.57,1.45), ROLE.dim, { fill:.7, line:.9 });
+
+reg("background", V(0,2.05,0), V(-3.95,.05,1.0));
+addSolid("background", new THREE.BoxGeometry(6.4,.1,2.2), V(0,2.05,0), ROLE.dim, { fill:.45, line:.8 });
+reg("keystore", V(0,1.05,0), V(-2.4,.05,.6));
+addSolid("keystore", new THREE.BoxGeometry(3.2,.1,1.4), V(0,1.05,0), ROLE.dim, { fill:.5, line:.8 });
+{ // a small key glyph on the keystore plate
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(.16,.035,8,24), new THREE.MeshBasicMaterial({ color:ROLE.dim, transparent:true, opacity:.9 }));
+  ring.rotation.x = -Math.PI/2; ring.position.set(.7,1.12,.2); scene.add(ring);
+  const bit = new THREE.Mesh(new THREE.BoxGeometry(.5,.03,.05), ring.material);
+  bit.position.set(1.08,1.12,.2); scene.add(bit);
+  E.keystore.mats.push({ m:ring.material, base:.9 });
+}
+
+/* outside */
+reg("human", V(0,10.35,0), V(0,.7,0), { priority:1 });
+const humanGeo = new THREE.IcosahedronGeometry(.42, 1);
+addSolid("human", humanGeo, V(0,10.35,0), ROLE.human, { fill:.5, line:.9, fillColor:0x0F1C2B });
+const halo = new THREE.Mesh(new THREE.TorusGeometry(.7,.012,6,64), new THREE.MeshBasicMaterial({ color:ROLE.human, transparent:true, opacity:.5 }));
+halo.position.set(0,10.35,0); halo.rotation.x = Math.PI/2; scene.add(halo);
+E.human.mats.push({ m:halo.material, base:.5 });
+
+reg("model", V(5.9,5.3,0), V(0,.5,0), { priority:1 });
+addSolid("model", new THREE.BoxGeometry(1.25,.42,.9), V(5.9,5.3,0), ROLE.agent, { fill:.6, line:.95, fillColor:0x1E170B });
+reg("web", V(-5.9,5.3,0), V(0,.5,0), { priority:1 });
+addSolid("web", new THREE.BoxGeometry(1.25,.42,.9), V(-5.9,5.3,0), ROLE.dim, { fill:.25, line:.7, dashed:true });
+
+reg("portals", V(6.7,3.5,0), V(0,.75,0), { priority:1 });
+addSolid("portals", roundedSlab(1.5,2.4,.12,.22), V(6.35,3.25,-.55), ROLE.core, { fill:.5, line:.6 });
+addSolid("portals", roundedSlab(1.5,2.4,.12,.22), V(7.05,3.75,.55), ROLE.core, { fill:.5, line:.6 });
+
+/* ------------------------------------------------------------ flows */
+const EDGES = [
+  { id:"q",  a:"human", b:"ui",       p:[V(-.3,9.95,0), V(-.3,8.3,0)],   bend:V(-.45,0,0), role:"human", label:"question" },
+  { id:"a",  a:"ui",    b:"human",    p:[V(.3,8.3,0),  V(.3,9.95,0)],    bend:V(.45,0,0),  role:"human", label:"answers, review" },
+  { id:"h",  a:"ui",    b:"arbiters", p:[V(-.7,8.14,.3), V(-.7,6.92,.3)], bend:V(0,0,0),   role:"core",  label:"request" },
+  { id:"s1", a:"registry", b:"arbiters", p:[V(-2.15,3.73,-1.1), V(-2.3,6.69,-.9)], bend:V(-1.5,0,-.7), role:"steer", label:"skill" },
+  { id:"s2", a:"map",   b:"arbiters", p:[V(0,3.73,-1.1), V(-.1,6.69,-.95)], bend:V(0,0,-1.5), role:"steer", label:"source" },
+  { id:"d",  a:"arbiters", b:"agent", p:[V(1.2,6.69,.25), V(1.2,5.58,.25)], bend:V(0,0,0), role:"key", label:"directive" },
+  { id:"p",  a:"agent", b:"arbiters", p:[V(2.25,5.58,-.25), V(2.25,6.69,-.25)], bend:V(0,0,0), role:"agent", label:"proposal" },
+  { id:"m",  a:"model", b:"agent",    p:[V(5.27,5.3,0), V(2.86,5.3,0)],  bend:V(0,.35,0), role:"agent", label:"weights" },
+  { id:"r",  a:"source",b:"agent",    p:[V(-.54,5.3,.35), V(.54,5.3,.35)], bend:V(0,.3,0), role:"steer", label:"read" },
+  { id:"sc", a:"source",b:"map",      p:[V(-1.2,5.02,-.6), V(-.25,3.73,-1.0)], bend:V(-.2,0,-.3), role:"steer", label:"scan" },
+  { id:"w",  a:"web",   b:"source",   p:[V(-5.27,5.3,0), V(-2.86,5.3,0)], bend:V(0,.35,0), role:"dim", label:"later", dashed:true },
+  { id:"c",  a:"arbiters", b:"episodes", p:[V(-1.4,6.69,.9), V(-2.15,3.73,.3)], bend:V(-2.4,0,1.0), role:"key", label:"commit" },
+  { id:"k",  a:"keystore", b:"arbiters", p:[V(1.6,1.11,.3), V(3.0,6.69,.9)], bend:V(2.4,0,.9), role:"dim", label:"sign" },
+  { id:"g",  a:"episodes", b:"culture",  p:[V(-1.27,3.73,.25), V(-.88,3.73,.25)], bend:V(0,.4,0), role:"key", label:"gate" },
+  { id:"dr", a:"culture",  b:"dspace",   p:[V(.88,3.73,.25), V(1.27,3.73,.25)], bend:V(0,.4,0), role:"dream", label:"dream" },
+  { id:"bg", a:"background", b:"dspace", p:[V(1.8,2.1,.3), V(2.15,3.52,.25)], bend:V(.9,0,0), role:"dream", label:"nightly" },
+  { id:"rv", a:"dspace", b:"ui",      p:[V(2.5,3.73,.45), V(2.6,8.14,.5)], bend:V(2.7,0,.7), role:"dream", label:"review" },
+  { id:"sy1",a:"store", b:"portals",  p:[V(3.4,3.45,-.2), V(5.6,3.3,-.35)], bend:V(0,.3,0), role:"core", label:"sync" },
+  { id:"sy2",a:"portals", b:"store",  p:[V(6.3,3.8,.35), V(3.4,3.45,.25)], bend:V(0,.3,0), role:"core", label:"sync" }
+];
+
+const dotTex = (() => {
+  const c = document.createElement("canvas"); c.width = c.height = 64;
+  const g = c.getContext("2d"); const r = g.createRadialGradient(32,32,0,32,32,32);
+  r.addColorStop(0,"rgba(255,255,255,1)"); r.addColorStop(.25,"rgba(255,255,255,.85)");
+  r.addColorStop(.6,"rgba(255,255,255,.18)"); r.addColorStop(1,"rgba(255,255,255,0)");
+  g.fillStyle = r; g.fillRect(0,0,64,64);
+  return new THREE.CanvasTexture(c);
+})();
+
+const EDGE = {};
+EDGES.forEach(e => {
+  const a = e.p[0], b = e.p[1];
+  const mid = a.clone().add(b).multiplyScalar(.5).add(e.bend);
+  e.curve = new THREE.QuadraticBezierCurve3(a, mid, b);
+  const geo = new THREE.BufferGeometry().setFromPoints(e.curve.getPoints(60));
+  e.mat = lineMat(ROLE[e.role], .16, e.dashed);
+  e.line = new THREE.Line(geo, e.mat);
+  if (e.dashed) e.line.computeLineDistances();
+  scene.add(e.line);
+  e.parts = [];
+  for (let i = 0; i < 4; i++){
+    const s = new THREE.Sprite(new THREE.SpriteMaterial({ map:dotTex, color:ROLE[e.role], transparent:true, depthWrite:false, blending:THREE.AdditiveBlending, opacity:0 }));
+    s.scale.set(.3,.3,.3); scene.add(s); e.parts.push(s);
+  }
+  e.len = e.curve.getLength();
+  EDGE[e.id] = e;
+});
+
+/* connections per element, from the edges */
+Object.keys(E).forEach(id => { E[id].links = new Set(); });
+EDGES.forEach(e => { E[e.a].links.add(e.b); E[e.b].links.add(e.a); });
+E.store.links.add("registry"); E.store.links.add("map"); E.store.links.add("episodes");
+E.store.links.add("culture"); E.store.links.add("dspace"); E.store.links.add("schema"); E.store.links.add("ledger");
+E.device.links = new Set(["ui","arbiters","agent","store","background","keystore"]);
+
+/* labels */
+Object.keys(E).forEach(id => {
+  const b = document.createElement("button");
+  b.className = "tag" + (E[id].small ? " small" : "");
+  b.type = "button";
+  b.textContent = INFO[id].name;
+  b.addEventListener("click", ev => { ev.stopPropagation(); select(id, true); });
+  tagsEl.appendChild(b);
+  E[id].tag = b;
+});
+
+/* ------------------------------------------------------------ camera orbit */
+const HOME = { target:V(0,4.9,0), theta:.72, phi:1.12, radius:24 };
+const cam = { target:HOME.target.clone(), theta:HOME.theta, phi:HOME.phi, radius:HOME.radius,
+  goalTarget:HOME.target.clone(), goalRadius:HOME.radius };
+let idle = !reduced, lastInteract = 0, shift = 0;
+
+function placeCamera(){
+  cam.target.lerp(cam.goalTarget, .07);
+  cam.radius += (cam.goalRadius - cam.radius) * .07;
+  const sp = Math.sin(cam.phi);
+  camera.position.set(
+    cam.target.x + cam.radius * sp * Math.sin(cam.theta),
+    cam.target.y + cam.radius * Math.cos(cam.phi),
+    cam.target.z + cam.radius * sp * Math.cos(cam.theta));
+  camera.lookAt(cam.target);
+  const w = stage.clientWidth, h = stage.clientHeight;
+  const goal = (!panel.hidden && w >= 720) ? 180 : 0;
+  shift += (goal - shift) * .08;
+  if (Math.abs(shift) > .5) camera.setViewOffset(w, h, shift, 0, w, h); else camera.clearViewOffset();
+}
+
+function resize(){
+  const w = stage.clientWidth, h = stage.clientHeight;
+  renderer.setSize(w, h, false);
+  renderer.domElement.style.width = w + "px"; renderer.domElement.style.height = h + "px";
+  camera.aspect = w / Math.max(h,1);
+  camera.fov = w < 720 ? 46 : 38;
+  if (w < 720 && cam.goalRadius === HOME.radius) { cam.goalRadius = 30; }
+  camera.updateProjectionMatrix();
+}
+window.addEventListener("resize", resize);
+
+const pointers = new Map();
+let downAt = null, dragged = false, pinchDist = 0;
+const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
+
+function pick(clientX, clientY){
+  const r = renderer.domElement.getBoundingClientRect();
+  ndc.set(((clientX - r.left) / r.width) * 2 - 1, -((clientY - r.top) / r.height) * 2 + 1);
+  ray.setFromCamera(ndc, camera);
+  const hits = ray.intersectObjects(pickables, false);
+  if (!hits.length) return null;
+  let best = hits[0];
+  for (const h of hits){ if (E[h.object.userData.id].priority > E[best.object.userData.id].priority) { best = h; break; } }
+  return best.object.userData.id;
+}
+
+stage.addEventListener("pointerdown", ev => {
+  stage.setPointerCapture(ev.pointerId);
+  pointers.set(ev.pointerId, { x:ev.clientX, y:ev.clientY });
+  downAt = { x:ev.clientX, y:ev.clientY }; dragged = false;
+  if (pointers.size === 2){ const [p1,p2] = [...pointers.values()]; pinchDist = Math.hypot(p1.x-p2.x, p1.y-p2.y); }
+  idle = false; lastInteract = performance.now();
+});
+stage.addEventListener("pointermove", ev => {
+  const prev = pointers.get(ev.pointerId);
+  if (!prev){
+    if (ev.pointerType === "mouse"){ hover = pick(ev.clientX, ev.clientY); stage.classList.toggle("hovering", !!hover); }
+    return;
+  }
+  const dx = ev.clientX - prev.x, dy = ev.clientY - prev.y;
+  pointers.set(ev.pointerId, { x:ev.clientX, y:ev.clientY });
+  if (downAt && Math.hypot(ev.clientX - downAt.x, ev.clientY - downAt.y) > 5) { dragged = true; stage.classList.add("dragging"); }
+  if (pointers.size === 2){
+    const [p1,p2] = [...pointers.values()];
+    const d = Math.hypot(p1.x-p2.x, p1.y-p2.y);
+    if (pinchDist) cam.goalRadius = clamp(cam.goalRadius * pinchDist / d, 9, 44);
+    pinchDist = d; dragged = true; return;
+  }
+  if (dragged){
+    cam.theta -= dx * .006;
+    cam.phi = clamp(cam.phi - dy * .005, .22, 1.5);
+  }
+});
+function endPointer(ev){
+  if (!pointers.has(ev.pointerId)) return;
+  pointers.delete(ev.pointerId);
+  stage.classList.remove("dragging");
+  if (pointers.size < 2) pinchDist = 0;
+  if (!dragged && pointers.size === 0){
+    const id = pick(ev.clientX, ev.clientY);
+    if (id) select(id, false); else if (!walk.on) closePanel();
+  }
+  lastInteract = performance.now();
+}
+stage.addEventListener("pointerup", endPointer);
+stage.addEventListener("pointercancel", endPointer);
+stage.addEventListener("pointerleave", () => { if (!pointers.size){ hover = null; stage.classList.remove("hovering"); } });
+stage.addEventListener("wheel", ev => {
+  ev.preventDefault();
+  cam.goalRadius = clamp(cam.goalRadius * Math.exp(ev.deltaY * .0012), 9, 44);
+  idle = false; lastInteract = performance.now();
+}, { passive:false });
+function clamp(v, a, b){ return Math.max(a, Math.min(b, v)); }
+
+/* ------------------------------------------------------------ state + panel */
+let selected = null, hover = null, invSel = null;
+const btnInv = document.getElementById("btnInv");
+
+function focusOn(id){
+  const p = E[id].pos;
+  cam.goalTarget.copy(HOME.target).lerp(V(p.x * .6, p.y, p.z * .6), .55);
+  cam.goalRadius = Math.min(cam.goalRadius, stage.clientWidth < 720 ? 27 : 21);
+}
+function invFor(id){ return INVARIANTS.filter(v => v[3].includes(id)); }
+
+function select(id, fromLabel){
+  selected = id; invSel = null;
+  btnInv.setAttribute("aria-pressed","false");
+  focusOn(id);
+  renderInfo(id);
+  idle = false;
+}
+function el(tag, attrs, kids){
+  const n = document.createElement(tag);
+  if (attrs) for (const k in attrs){ if (k === "text") n.textContent = attrs[k]; else if (k === "cls") n.className = attrs[k]; else n.setAttribute(k, attrs[k]); }
+  (kids || []).forEach(c => c && n.appendChild(c));
+  return n;
+}
+function renderInfo(id){
+  const d = INFO[id];
+  panel.innerHTML = "";
+  const sw = el("span", { cls:"swatch" }); sw.style.background = CSS[d.role];
+  const k = el("div", { cls:"kicker" }, [sw, document.createTextNode(d.kicker)]);
+  const close = el("button", { id:"close", "aria-label":"Close" }); close.textContent = "✕";
+  close.addEventListener("click", closePanel);
+  panel.appendChild(el("div", { cls:"top" }, [ el("div", null, [k, el("h2", { text:d.name })]), close ]));
+  panel.appendChild(el("p", { text:d.desc }));
+  if (d.facts.length){ panel.appendChild(el("ul", null, d.facts.map(f => el("li", { text:f })))); }
+  const lv = liveLine(id); if (lv) panel.appendChild(el("div", { cls:"live", text:lv }));
+  const links = [...E[id].links].filter(x => x !== id);
+  if (links.length){
+    panel.appendChild(el("div", { cls:"sec", text:"Connected to" }));
+    panel.appendChild(el("div", { cls:"chips" }, links.map(x => {
+      const b = el("button", { cls:"chip", type:"button", text:INFO[x].name });
+      b.addEventListener("click", () => select(x, true)); return b;
+    })));
+  }
+  const inv = invFor(id);
+  if (inv.length){
+    panel.appendChild(el("div", { cls:"sec", text:"Invariants it upholds" }));
+    panel.appendChild(el("div", { cls:"chips" }, inv.map(v => {
+      const b = el("button", { cls:"chip", type:"button" }, [ el("span", { cls:"n", text:"#" + v[0] }), document.createTextNode(v[1]) ]);
+      b.addEventListener("click", () => openInvariants(v[0])); return b;
+    })));
+  }
+  panel.hidden = false;
+}
+function openInvariants(n){
+  selected = null; invSel = n || null;
+  btnInv.setAttribute("aria-pressed","true");
+  panel.innerHTML = "";
+  const close = el("button", { id:"close", "aria-label":"Close" }); close.textContent = "✕";
+  close.addEventListener("click", closePanel);
+  panel.appendChild(el("div", { cls:"top" }, [ el("div", null, [ el("div", { cls:"kicker", text:"checked by the reference model" }), el("h2", { text:"Invariants" }) ]), close ]));
+  panel.appendChild(el("p", { text:"Fourteen rules the design must never break. Pick one to see which parts carry it." }));
+  const list = el("div", { cls:"inv" });
+  INVARIANTS.forEach(v => {
+    const b = el("button", { type:"button", "aria-pressed": String(invSel === v[0]) },
+      [ el("span", { cls:"n", text:"#" + v[0] }), el("span", { cls:"t", text:v[1] }), el("span", { cls:"d", text:v[2] }) ]);
+    b.addEventListener("click", () => {
+      invSel = invSel === v[0] ? null : v[0];
+      list.querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", "false"));
+      b.setAttribute("aria-pressed", String(invSel === v[0]));
+      cam.goalTarget.copy(HOME.target);
+    });
+    list.appendChild(b);
+  });
+  panel.appendChild(list);
+  panel.appendChild(el("div", { cls:"foot", text:"51 tests over thousands of random histories; 27 deliberate breaks, all caught." }));
+  panel.hidden = false;
+}
+function closePanel(){
+  panel.hidden = true; selected = null; invSel = null;
+  btnInv.setAttribute("aria-pressed","false");
+}
+btnInv.addEventListener("click", () => { if (btnInv.getAttribute("aria-pressed") === "true") closePanel(); else openInvariants(null); });
+document.getElementById("btnReset").addEventListener("click", () => {
+  cam.goalTarget.copy(HOME.target); cam.goalRadius = stage.clientWidth < 720 ? 30 : HOME.radius;
+  cam.theta = HOME.theta; cam.phi = HOME.phi;
+});
+document.addEventListener("keydown", ev => {
+  if (ev.key === "Escape"){ if (walk.on) stopWalk(); else closePanel(); }
+  if (walk.on && ev.key === "ArrowRight") goStep(walk.i + 1);
+  if (walk.on && ev.key === "ArrowLeft") goStep(walk.i - 1);
+});
+
+/* ------------------------------------------------------------ walkthrough */
+const walk = { on:false, i:0, playing:!reduced, t:0 };
+const walkEl = document.getElementById("walk"), btnWalk = document.getElementById("btnWalk");
+const wCount = document.getElementById("wCount"), wTitle = document.getElementById("wTitle"),
+      wText = document.getElementById("wText"), wBar = document.getElementById("wBar"), wPlay = document.getElementById("wPlay");
+const STEP_MS = 5200;
+function goStep(i){
+  walk.i = (i + STEPS.length) % STEPS.length; walk.t = performance.now();
+  const s = STEPS[walk.i];
+  wCount.textContent = String(walk.i + 1).padStart(2,"0") + " / " + STEPS.length;
+  wTitle.textContent = s[0]; wText.textContent = s[1];
+  wBar.style.width = ((walk.i + 1) / STEPS.length * 100) + "%";
+  select(s[3], true);
+}
+function startWalk(){
+  walk.on = true; walkEl.hidden = false; btnWalk.setAttribute("aria-pressed","true");
+  setPlay(!reduced); goStep(0);
+}
+function stopWalk(){
+  walk.on = false; walkEl.hidden = true; btnWalk.setAttribute("aria-pressed","false");
+}
+function setPlay(p){ walk.playing = p; wPlay.textContent = p ? "❚❚" : "▶"; wPlay.setAttribute("aria-label", p ? "Pause" : "Play"); walk.t = performance.now(); }
+btnWalk.addEventListener("click", () => walk.on ? stopWalk() : startWalk());
+document.getElementById("wPrev").addEventListener("click", () => { setPlay(false); goStep(walk.i - 1); });
+document.getElementById("wNext").addEventListener("click", () => { setPlay(false); goStep(walk.i + 1); });
+wPlay.addEventListener("click", () => setPlay(!walk.playing));
+document.getElementById("wClose").addEventListener("click", stopWalk);
+
+/* ------------------------------------------------------------ frame */
+const tmp = new THREE.Vector3();
+function emphasisSet(){
+  if (walk.on){
+    const s = STEPS[walk.i], set = new Set([s[3]]);
+    s[2].forEach(eid => { set.add(EDGE[eid].a); set.add(EDGE[eid].b); });
+    return set;
+  }
+  if (invSel){ return new Set(INVARIANTS[invSel - 1][3]); }
+  if (selected){ return new Set([selected, ...E[selected].links]); }
+  return null;
+}
+function activeEdges(){
+  if (walk.on) return new Set(STEPS[walk.i][2]);
+  return null;
+}
+
+let last = performance.now();
+function frame(now){
+  if (!running) return;
+  const dt = Math.min(.05, (now - last) / 1000); last = now;
+  if (idle && !walk.on) cam.theta += dt * .05;
+  if (!idle && !selected && !walk.on && !invSel && now - lastInteract > 12000 && !reduced) idle = true;
+  if (walk.on && walk.playing && now - walk.t > STEP_MS) goStep(walk.i + 1);
+  placeCamera();
+
+  const emph = emphasisSet(), act = activeEdges();
+  for (const id in E){
+    const e = E[id];
+    const on = !emph || emph.has(id);
+    const f = (on ? 1 : .22) * (hover === id ? 1.25 : 1);
+    e.mats.forEach(x => x.m.opacity = Math.min(1, x.base * f));
+    e.fills.forEach(x => x.m.opacity = x.base * (on ? 1 : .5));
+    e.tag.classList.toggle("dim", !on);
+    e.tag.classList.toggle("on", hover === id || selected === id);
+  }
+  halo.rotation.z += dt * .4;
+
+  const t = now / 1000;
+  EDGES.forEach(e => {
+    let level;
+    if (act) level = act.has(e.id) ? 1 : 0;
+    else if (emph) level = (emph.has(e.a) && emph.has(e.b)) ? .8 : 0;
+    else level = e.id === "w" ? 0 : .45;
+    e.mat.opacity = act ? (level ? .75 : .06) : (emph ? (level ? .5 : .06) : .16);
+    const n = level >= 1 ? 4 : (level > 0 ? 2 : 0);
+    const speed = (reduced ? .12 : .32) * (3.2 / Math.max(1.5, e.len)) ;
+    e.parts.forEach((s, i) => {
+      if (i >= n){ s.material.opacity = 0; return; }
+      const u = (t * speed + i / n) % 1;
+      e.curve.getPointAt(u, s.position);
+      const fade = Math.sin(Math.PI * u);
+      s.material.opacity = fade * (level >= 1 ? 1 : .7);
+      const sc = level >= 1 ? .34 : .24; s.scale.set(sc, sc, sc);
+    });
+  });
+
+  renderer.render(scene, camera);
+
+  const w = stage.clientWidth, h = stage.clientHeight;
+  for (const id in E){
+    const e = E[id];
+    tmp.copy(e.tagPos).project(camera);
+    const vis = tmp.z < 1 && Math.abs(tmp.x) < 1.2 && Math.abs(tmp.y) < 1.2;
+    e.tag.style.visibility = vis ? "visible" : "hidden";
+    if (vis) e.tag.style.transform = "translate(" + ((tmp.x * .5 + .5) * w).toFixed(1) + "px," + ((-tmp.y * .5 + .5) * h).toFixed(1) + "px) translate(-50%,-100%)";
+  }
+  requestAnimationFrame(frame);
+}
+resize();
+placeCamera();
+requestAnimationFrame(frame);
+})();
+</script>
+
+</body>
+</html>

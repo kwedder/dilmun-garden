@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Dilmun</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="shell">
+  <header class="top">
+    <div class="brand">Dilmun</div>
+    <span id="status" class="pill">starting</span>
+    <span id="statehash" class="hash" title="State hash: the same log gives the same hash on every device"></span>
+  </header>
+
+  <main>
+    <section id="tab-map" class="tab map-tab">
+      <iframe id="map" src="map.html" title="System map"></iframe>
+    </section>
+
+    <section id="tab-sources" class="tab" hidden>
+      <div class="pad">
+        <h2>Sources</h2>
+        <p class="lede">Text files the agent may read. The workspace map records what each one holds, so a run on a file that changed is refused until you rescan.</p>
+        <div class="row">
+          <button id="btn-folder" class="primary">Choose folder</button>
+          <button id="btn-samples">Add sample texts</button>
+          <button id="btn-rescan">Rescan</button>
+        </div>
+        <p id="folder-line" class="meta"></p>
+        <ul id="source-list" class="list"></ul>
+        <div class="note">
+          <div class="label">What the agent reads in this build</div>
+          <p>Lines written as <code>entity | attribute | value</code>, for example <code>aspirin | treats | fever</code>. Each one is quoted exactly from the file, and the arbiters keep it only if the attribute is in the schema:</p>
+          <p id="schema-line" class="mono"></p>
+          <p>The on-device model takes this slot in a later build. Everything around it (directives, checks, the log, the gate) is already the real thing.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-work" class="tab" hidden>
+      <div class="pad">
+        <h2>Work</h2>
+        <div class="card">
+          <div class="card-head">
+            <div>
+              <div class="label">Arbiters</div>
+              <div id="arb-line" class="big"></div>
+            </div>
+            <div class="row tight">
+              <button id="btn-pause">Pause</button>
+              <button id="btn-expire">Expire stale</button>
+            </div>
+          </div>
+          <p class="meta">Pause is a steward action: it's signed with your key and recorded in the log.</p>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <div>
+              <div class="label">Promotion gate</div>
+              <div class="big">Needs <span id="gate-k">2</span> distinct sources, or your approval</div>
+            </div>
+            <button id="btn-gate" class="primary">Run the gate</button>
+          </div>
+          <div class="sub">Held</div>
+          <ul id="held-list" class="list"></ul>
+        </div>
+
+        <div class="card">
+          <div class="label">Open directives</div>
+          <ul id="dir-list" class="list"></ul>
+        </div>
+
+        <div class="card">
+          <div class="label">Recent results</div>
+          <ul id="result-list" class="list"></ul>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-memory" class="tab" hidden>
+      <div class="pad">
+        <h2>Memory</h2>
+        <p class="lede">Culture, K: facts that passed the gate. Each one is a copy; the original stays in its episode.</p>
+        <label class="search"><span class="sr">Search memory</span><input id="q" type="search" placeholder="Search entities, attributes, values" autocomplete="off"></label>
+        <p id="mem-count" class="meta"></p>
+        <ul id="mem-list" class="list facts"></ul>
+      </div>
+    </section>
+
+    <section id="tab-log" class="tab" hidden>
+      <div class="pad">
+        <h2>Log</h2>
+        <p class="lede">Every signed transaction, newest first. Nothing here is ever edited.</p>
+        <div class="row">
+          <button id="btn-verify" class="primary">Verify the log</button>
+        </div>
+        <p id="verify-line" class="meta"></p>
+        <ul id="log-list" class="list log"></ul>
+        <button id="btn-more" class="ghost" hidden>Show older</button>
+      </div>
+    </section>
+  </main>
+
+  <nav class="tabs" aria-label="Sections">
+    <button data-tab="map" aria-current="page">Map</button>
+    <button data-tab="sources">Sources</button>
+    <button data-tab="work">Work</button>
+    <button data-tab="memory">Memory</button>
+    <button data-tab="log">Log</button>
+  </nav>
+</div>
+
+<div id="sheet" hidden>
+  <div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+    <div class="card-head">
+      <div>
+        <div id="sheet-kicker" class="label"></div>
+        <div id="sheet-title" class="big"></div>
+      </div>
+      <button id="sheet-close" aria-label="Close">✕</button>
+    </div>
+    <pre id="sheet-body"></pre>
+  </div>
+</div>
+<div id="toast" role="status" aria-live="polite" hidden></div>
+
+<script src="app.js"></script>
+</body>
+</html>

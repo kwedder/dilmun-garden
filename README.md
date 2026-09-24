@@ -53,13 +53,39 @@ The app is built around **MiniCPM5-1B** by OpenBMB, in the GGUF format that llam
    - checks that it's a GGUF file
    - copies it into its private storage and computes its SHA-256 fingerprint
    - loads it
-4. Ask a question. With **Use memory** on, the settled facts that match your question are put in front of the model, numbered, and the answer cites them like [1]. Tap **Memory given** under an answer to see exactly which facts it had. **Let it think first** lets a reasoning model think before it answers; it's slower. **Stop** ends an answer early.
+4. Ask a question. With **Use memory** on, the facts that match your question are put in front of the model, numbered, and the answer cites them like [1]:
+   - **settled** facts first: the ones that passed the gate (2 sources, or your approval)
+   - then facts still **held** at the gate, marked *unconfirmed* so the model (and you) can tell them apart. With a single textbook almost everything is held, so this is what makes memory useful before a second source arrives.
 
-Nothing said on the Ask tab is written to the log. Asking reads memory and never writes it.
+   Each fact goes in with its quote from the source. Tap **Memory given** under an answer to see exactly which facts it had, and which were unconfirmed. **Let it think first** lets a reasoning model think before it answers; it's slower. **Stop** ends an answer early.
+
+Nothing said on the Ask tab is written to the log. Asking reads memory and never writes it: it is a read, not a directive, so no agent is deployed and the arbiters commit nothing. The read is traced, so the map and the activity card show it.
+
+The **activity card** sits between the conversation and the input box. Folded, it's one line: what the app is doing now (a bulk run's source and passage, or the latest event). Open, it lists recent events: sources read, each passage, each fact kept or refused with the reason, model loads, errors. An error opens it by itself. It remembers whether you left it open.
+
+**Threads** on the model card: *Automatic* uses a safe default for the phone (at most 4); you can pick up to the number of cores. A loaded model reloads with the new count. **Diagnostics** show what llama.cpp read from the file (architecture, tokenizer and pre-tokenizer, whether the file has a chat template) and the CPU features in use: the first things to check when a model writes nonsense.
 
 With a model loaded, **Extract** on the Sources tab deploys the model instead of the pattern agent (you can turn that off on the Ask tab). The model reads the file a passage at a time and proposes facts, each with a quote. The arbiters keep only the facts whose quote is really in the file, word for word. The rest are recorded as refused, with the reason. Every result names the exact model file by its fingerprint, and the model's raw output is kept in the episode, so a result can always be explained without running the model again.
 
-On a recent flagship phone, a 1B model at Q4 reads a prompt at a few hundred tokens a second and writes at around 15 to 30. Each answer shows its own speed.
+On a recent flagship phone, a 1B model at Q4 reads a prompt at a few hundred tokens a second and writes at around 15 to 30. Each answer shows its own speed. (Tested: Q4_K_M from OpenBMB on a Xiaomi Pad 7 writes about 17 tokens a second. An F16 file produced garbled text on the same tablet; use Q4_K_M.) Importing checks for free space first: the copy needs the file's size plus a little room.
+
+## Extract many sources
+
+On **Sources**, tick sources, or type part of a name (for example `01-`) to select every match, then tap **Extract selected**. **Extract all** does every source.
+
+- Sources run **one at a time**. Each gets its own directive, issued only when its turn comes, and its own signed result. A long queue never meets the limit of 8 open directives or a directive's 10-minute expiry, and a refusal in one source never affects another.
+- **Skip sources already extracted** (on by default) skips any source that has a result for exactly what the file holds now. Edit a file and rescan, and it's extracted again.
+- **Pause** and **Cancel** take effect between sources: the source being read finishes and commits first. What was committed stays.
+- The queue is saved after every source. If the app closes mid-run, the run comes back as *interrupted*, ready to **Resume** from where it stopped.
+- The run pauses by itself if the steward pauses the arbiters, or if three sources fail in a row.
+- The screen stays on while a run is going. Work still needs the app open; a foreground service comes with the background slice.
+- A question on Ask waits for the source being read to finish, then runs before the next one.
+
+Each file should take less than 10 minutes to extract, or its directive expires and that file's run is refused. With the model at about 20 to 40 seconds per 2,400-character passage, keep files under about 25,000 characters (one textbook section).
+
+## Live map
+
+The map plays every step the engine takes as it happens: a packet on the edge it travels, a glow on the part that receives it, and a line in the **Live activity** feed. That covers requests, steering, signing, commits, the agent's deployment and reads, **each passage as the model reads it** (and what it proposed, and how many quotes were really in the text), **each fact as the arbiters keep or refuse it**, the gate, bulk runs, model loads, and Ask reading memory. Steps that arrive in a burst are played in order, faster when many wait. The trace lives in memory only (the newest 400 steps); nothing about it is written to the log. **Tour** walks one question through the system; the map offers it once.
 
 ## Try it
 
@@ -73,7 +99,7 @@ On a recent flagship phone, a 1B model at Q4 reads a prompt at a few hundred tok
 4. **Memory**: the settled facts, K.
 5. **Log**: every transaction, newest first. **Verify the log** re-reads everything from disk and re-checks every hash, signature and chain link.
 6. **Ask**: the model client (see above).
-7. **Map**: the interactive 3D map of the system, with live numbers from this device in each part's panel.
+7. **Map**: the interactive 3D map of the system. Each step the engine takes plays live on it (see *Live map*), and each part's panel shows live numbers from this device.
 
 Try editing a file in your folder after mapping it: an extract is refused until you rescan. Pause on the Work tab and try to extract: the arbiters refuse.
 
@@ -87,13 +113,14 @@ core/                      plain Java, no Android: the part the invariants are a
   Store.java               the log's own rules: signatures, roles, chains, forks,
                            directive lifecycle, skill versions
   State.java               everything derived by replay; K = C∘F; the state hash
-  Engine.java              the portal: arbiters, gate, steward actions, reads
+  Engine.java              the portal: arbiters, gate, steward actions, reads, the live trace
+  BulkRun.java             extract many sources in turn: pause, resume, cancel, skip, restore
   Agent.java               the agent interface, and the pattern agent
   ModelAgent.java          the model as an agent: passages, prompt, quote location
   Ask.java                 the prompt for a question, with numbered facts
   Llm.java, Llama.java     the model interface, and the JNI binding to llama.cpp
   Policy.java              budgets, expiry, the gate's k, default schema and skills
-  src/test/.../CoreTest    52 checks, run by CI
+  src/test/.../CoreTest    87 checks, run by CI
   src/test/.../LlamaTest   the native layer: load, stream, stop, UTF-8, limits
   src/test/.../DevServer   desktop preview of the screens against the real core
 
@@ -119,7 +146,7 @@ tools/make_tiny_gguf.py    writes a tiny random-weight model for the native test
 - **Keys.** Signatures are ECDSA P-256 rather than Ed25519, so private keys can live in the Android Keystore on every device from Android 8. In this build, the device holds the steward's key as well as its own.
 - **Storage.** The log is stored as transaction JSON. State is rebuilt in memory at startup. The datom tables, the four indexes and FTS5 come with the query slice.
 - **Backups.** The log is excluded from backups and device transfer, because it's only valid with the keys, which never leave the Keystore.
-- **Retrieval for Ask** is a simple word-overlap score over settled facts. BM25 and Datalog come with the query slice.
+- **Retrieval for Ask** is a simple word-overlap score over settled and held facts and their quotes. BM25 and Datalog come with the query slice.
 - **Not yet in this build:**
   - sync between portals
   - excision
@@ -143,7 +170,7 @@ java -cp build/core app.dilmun.core.CoreTest
 java -cp build/core app.dilmun.core.DevServer app/src/main/assets 8765
 ```
 
-Then open http://127.0.0.1:8765/. The preview keeps keys and the log in memory, and "Choose folder" uses the sample texts.
+Then open http://127.0.0.1:8765/. The preview keeps keys and the log in memory, and "Choose folder" uses the sample texts (or the folder given with `-Ddilmun.sources=<folder>`).
 
 To try the model on a desktop, build the native layer against a llama.cpp checkout and point the preview at it and a GGUF file:
 

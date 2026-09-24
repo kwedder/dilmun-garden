@@ -145,10 +145,18 @@ Java_app_dilmun_core_Llama_nativeInfo(JNIEnv * env, jclass, jlong handle) {
     llama_model_meta_val_str(h->model, "general.architecture", arch, sizeof arch);
     char name[256] = {0};
     llama_model_meta_val_str(h->model, "general.name", name, sizeof name);
+    // the tokenizer family and pre-tokenizer: a mismatch here is a common cause of garbled output
+    char tok[64] = {0};
+    llama_model_meta_val_str(h->model, "tokenizer.ggml.model", tok, sizeof tok);
+    char pre[64] = {0};
+    llama_model_meta_val_str(h->model, "tokenizer.ggml.pre", pre, sizeof pre);
     std::string j = std::string("{")
         + "\"desc\":\"" + json_escape(desc) + "\","
         + "\"arch\":\"" + json_escape(arch) + "\","
         + "\"name\":\"" + json_escape(name) + "\","
+        + "\"tokenizer\":\"" + json_escape(tok) + "\","
+        + "\"pre\":\"" + json_escape(pre) + "\","
+        + "\"n_vocab\":" + std::to_string(llama_vocab_n_tokens(llama_model_get_vocab(h->model))) + ","
         + "\"params\":" + std::to_string(llama_model_n_params(h->model)) + ","
         + "\"bytes\":" + std::to_string(llama_model_size(h->model)) + ","
         + "\"n_ctx\":" + std::to_string(h->n_ctx) + ","

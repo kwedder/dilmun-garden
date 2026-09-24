@@ -27,7 +27,8 @@ import java.util.concurrent.atomic.AtomicLong;
  *
  *   java -cp <core classes> app.dilmun.core.DevServer app/src/main/assets 8765
  *   add -Ddilmun.llm=<libdilmun_llm.so> -Ddilmun.model=<model.gguf> to try the model;
- *   "Import model file" then loads that file.
+ *   "Import model file" then loads that file. -Ddilmun.sources=<folder> reads that
+ *   folder's files as the sources instead of the bundled samples.
  */
 public final class DevServer {
 
@@ -59,6 +60,10 @@ public final class DevServer {
     static final List<Object> events = new ArrayList<>();
     static final ExecutorService work = Executors.newSingleThreadExecutor();
     static final AtomicLong jobs = new AtomicLong();
+    static volatile boolean traceNudged = false;
+    static BulkRun bulk;
+    static int threadsSetting = 0;
+    static String bulkSaved = null;
 
     static synchronized void emit(String name, Object payload) { events.add(java.util.Arrays.asList(name, payload)); }
 
@@ -79,12 +84,30 @@ public final class DevServer {
         File f = new File(System.getProperty("dilmun.model", "/nonexistent"));
         return Tx.m("file", imported && f.isFile() ? Tx.m("name", f.getName().replace(".gguf", ""), "bytes", f.length(), "sha", modelSha, "id", modelId()) : null,
                 "loaded", llama != null, "loading", false, "error", null, "useForExtraction", useModel,
-                "info", llama == null ? null : llama.info(), "threads", (long) Llama.defaultThreads());
+                "info", llama == null ? null : llama.info(), "threads", (long) threads(),
+                "threadsSetting", (long) threadsSetting, "threadsAuto", (long) Llama.defaultThreads(),
+                "cores", (long) Runtime.getRuntime().availableProcessors());
     }
 
+    static int threads() { return threadsSetting > 0 ? threadsSetting : 2; }
+
     static Object load() {
-        if (llama == null) llama = Llama.load(System.getProperty("dilmun.model"), modelId(), 2048, 2);
+        if (llama == null) {
+            llama = Llama.load(System.getProperty("dilmun.model"), modelId(), 2048, threads());
+            engine.noteWork("model", "Model loaded: " + llama.info().get("desc") + " · " + threads() + " threads", Tx.m("event", "load"));
+        }
         return modelStatus();
+    }
+
+    static Agent agentFor(String name, ModelAgent.Progress progress) {
+        return llama != null && useModel
+                ? new ModelAgent(llama, Policy.SCHEMA_ORDER, ModelAgent.traced(engine, name, progress))
+                : new Agent.PatternAgent();
+    }
+
+    static String nameOf(String id) {
+        for (Object o : engine.sources()) { Map<?, ?> m = (Map<?, ?>) o; if (id.equals(m.get("id"))) return String.valueOf(m.get("name")); }
+        return id;
     }
 
     public static void main(String[] args) throws Exception {
@@ -93,7 +116,13 @@ public final class DevServer {
         if (System.getProperty("dilmun.llm") != null) { System.load(System.getProperty("dilmun.llm")); Llama.init(null); }
         engine = Engine.open(new CoreTest.MemBackend(), new Crypto.SoftSigner(), new Crypto.SoftSigner(),
                 Engine.SYSTEM_CLOCK, new Agent.PatternAgent());
-        samples = new DirSources(new File(assets, "samples"));
+        samples = new DirSources(new File(System.getProperty("dilmun.sources", new File(assets, "samples").getPath())));
+        engine.onTrace(() -> {
+            if (traceNudged) return;
+            traceNudged = true;
+            emit("trace", null);
+        });
+        bulk = new BulkRun(engine, work::execute, st -> emit("bulk", st), sv -> bulkSaved = sv == null ? null : Json.canon(sv));
 
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0);
         server.createContext("/events", ex -> {
@@ -150,6 +179,32 @@ public final class DevServer {
             case "log": return engine.log(((Number) a.get(0)).intValue(), ((Number) a.get(1)).intValue());
             case "tx": return Json.parse(engine.tx((String) a.get(0)));
             case "verify": return engine.verify();
+            case "trace": traceNudged = false; return engine.trace(((Number) a.get(0)).longValue());
+            case "extracted": {
+                List<Object> out = new ArrayList<>();
+                for (Object o : engine.sources()) { String id = (String) ((Map<?, ?>) o).get("id"); if (engine.extracted(id)) out.add(id); }
+                return out;
+            }
+            case "bulkStart": {
+                Map<String, Object> req = Json.obj((String) a.get(0));
+                List<String> ids = new ArrayList<>(), names = new ArrayList<>();
+                for (Object o : (List<?>) req.get("ids")) ids.add(String.valueOf(o));
+                if (req.get("names") instanceof List) for (Object o : (List<?>) req.get("names")) names.add(String.valueOf(o));
+                if (!bulk.isActive() && !"idle".equals(bulk.status().get("state"))) bulk.clear();
+                bulk.start(ids, names, !Boolean.FALSE.equals(req.get("skip")), samples, DevServer::agentFor);
+                return bulk.status();
+            }
+            case "bulkStatus": return bulk.status();
+            case "bulkPause": bulk.pause(); return bulk.status();
+            case "bulkResume": bulk.resume(samples, DevServer::agentFor); return bulk.status();
+            case "bulkCancel": bulk.cancel(); return bulk.status();
+            case "bulkClear": bulk.clear(); return bulk.status();
+            case "setThreads": {
+                threadsSetting = ((Number) a.get(0)).intValue();
+                if (llama == null) return modelStatus();
+                Llama l = llama; llama = null; l.close();
+                return job("load", DevServer::load);
+            }
             case "rescan": return engine.scan(samples);
             case "useSamples": added = true; return engine.scan(samples);
             case "pickFolder": added = true; return job("scan", () -> engine.scan(samples));
@@ -160,7 +215,7 @@ public final class DevServer {
             case "approve": engine.approve(Collections.singletonList((String) a.get(0))); return engine.gate();
             case "modelStatus": return modelStatus();
             case "setUseModel": useModel = Boolean.TRUE.equals(a.get(0)); return modelStatus();
-            case "unloadModel": { Llama l = llama; llama = null; if (l != null) l.close(); return modelStatus(); }
+            case "unloadModel": { Llama l = llama; llama = null; if (l != null) { l.close(); engine.noteWork("model", "Model unloaded", Tx.m("event", "unload")); } return modelStatus(); }
             case "removeModel": { Llama l = llama; llama = null; if (l != null) l.close(); imported = false; return modelStatus(); }
             case "loadModel": return job("load", DevServer::load);
             case "stop": { Llama l = llama; if (l != null) l.stop(); return true; }
@@ -185,12 +240,10 @@ public final class DevServer {
                 final String sid = (String) a.get(0);
                 final long[] id = new long[1];
                 id[0] = job("extract", () -> {
-                    Agent agent = llama != null && useModel
-                            ? new ModelAgent(llama, Policy.SCHEMA_ORDER, new ModelAgent.Progress() {
-                                @Override public void passage(int i, int n) { emit("job", Tx.m("id", id[0], "kind", "extract", "state", "progress", "passage", (long) i, "passages", (long) n)); }
-                                @Override public void text(String piece) { }
-                            })
-                            : new Agent.PatternAgent();
+                    Agent agent = agentFor(nameOf(sid), new ModelAgent.Progress() {
+                        @Override public void passage(int i, int n) { emit("job", Tx.m("id", id[0], "kind", "extract", "state", "progress", "passage", (long) i, "passages", (long) n)); }
+                        @Override public void text(String piece) { }
+                    });
                     Map<String, Object> r = engine.extract(sid, samples, agent);
                     r.put("source", sid);
                     return r;

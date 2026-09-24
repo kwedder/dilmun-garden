@@ -43,9 +43,28 @@
             <button id="btn-remove" class="small ghost">Remove</button>
           </div>
           <label class="check"><input type="checkbox" id="use-model"> Use the model for extraction on the Sources tab</label>
+          <div class="row tight threads-row">
+            <label for="threads" class="m">Threads</label>
+            <select id="threads" class="small"></select>
+            <span id="threads-note" class="m"></span>
+          </div>
+          <details id="model-diag" class="diag" hidden>
+            <summary>Diagnostics</summary>
+            <dl id="model-diag-list"></dl>
+          </details>
         </div>
 
         <div id="thread" class="thread" aria-live="polite"></div>
+
+        <section id="activity" class="activity" hidden aria-label="Activity">
+          <button id="activity-head" class="activity-head" aria-expanded="false" aria-controls="activity-list">
+            <span id="activity-dot" class="dot"></span>
+            <span id="activity-line" class="activity-line"></span>
+            <span id="activity-count" class="activity-count"></span>
+            <span class="chev" aria-hidden="true">▾</span>
+          </button>
+          <ol id="activity-list" class="activity-list" hidden></ol>
+        </section>
 
         <form id="composer" class="composer" autocomplete="off">
           <div class="opts">
@@ -71,6 +90,41 @@
           <button id="btn-rescan">Rescan</button>
         </div>
         <p id="folder-line" class="meta"></p>
+
+        <div id="bulk-card" class="card bulk-card" hidden>
+          <div class="card-head">
+            <div>
+              <div class="label">Bulk extract</div>
+              <div id="bulk-title" class="big"></div>
+              <div id="bulk-meta" class="m"></div>
+            </div>
+            <span id="bulk-state" class="pill"></span>
+          </div>
+          <div id="bulk-progress" class="progress"><i></i></div>
+          <div id="bulk-errors" class="why"></div>
+          <div class="row tight">
+            <button id="btn-bulk-pause" class="small">Pause</button>
+            <button id="btn-bulk-resume" class="small primary">Resume</button>
+            <button id="btn-bulk-cancel" class="small ghost">Cancel</button>
+            <button id="btn-bulk-clear" class="small ghost">Dismiss</button>
+          </div>
+          <p class="meta">Keep the app open: the screen stays on while a run is going. Each source gets its own directive when its turn comes, and its own signed result.</p>
+        </div>
+
+        <div id="select-bar" class="select-bar" hidden>
+          <div class="row tight">
+            <button id="btn-extract-all" class="primary small">Extract all</button>
+            <button id="btn-extract-selected" class="small" disabled>Extract selected</button>
+          </div>
+          <div class="row tight">
+            <button id="btn-select-all" class="small ghost">Select all</button>
+            <button id="btn-select-none" class="small ghost">Select none</button>
+            <label class="sr" for="select-filter">Select by name</label>
+            <input id="select-filter" type="search" class="filter" placeholder="Select by name, e.g. 01-" autocomplete="off">
+          </div>
+          <label class="check"><input type="checkbox" id="opt-skip" checked> Skip sources already extracted (unless the file changed)</label>
+          <p id="select-line" class="meta"></p>
+        </div>
         <ul id="source-list" class="list"></ul>
         <div class="note">
           <div class="label">Without a model</div>

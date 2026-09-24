@@ -17,10 +17,12 @@ import java.util.Map;
 import java.util.TreeMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 import app.dilmun.core.Agent;
 import app.dilmun.core.Ask;
+import app.dilmun.core.BulkRun;
 import app.dilmun.core.Engine;
 import app.dilmun.core.Json;
 import app.dilmun.core.Llama;
@@ -38,6 +40,9 @@ import app.dilmun.core.Tx;
  * Quick calls answer directly. Slow ones (extracting with the model, asking,
  * importing or loading a model) return a job number at once and report
  * through events: window.dilmunEvent("job", {...}) and ("token", {...}).
+ * A bulk run reports its state through ("bulk", {...}), and every step the
+ * engine takes is announced with ("trace", null): the page then reads the
+ * trace since the last step it saw.
  */
 final class Bridge {
     private final MainActivity activity;
@@ -45,8 +50,10 @@ final class Bridge {
     private final SharedPreferences prefs;
     private final ExecutorService work = Executors.newSingleThreadExecutor();
     private final AtomicLong jobs = new AtomicLong();
+    private final AtomicBoolean traceNudged = new AtomicBoolean();
     private final ModelHost model;
     private Engine engine;
+    private BulkRun bulk;
     private TreeSources folder;
     private AssetSources samples;
 
@@ -65,8 +72,43 @@ final class Bridge {
             engine = Engine.open(new SqliteBackend(activity),
                     new KeystoreSigner("dilmun-portal"), new KeystoreSigner("dilmun-steward"),
                     Engine.SYSTEM_CLOCK, new Agent.PatternAgent());
+            // New trace events: tell the page once, and let it read everything since its last seq.
+            engine.onTrace(new Runnable() {
+                @Override public void run() {
+                    if (traceNudged.compareAndSet(false, true)) {
+                        web.post(new Runnable() {
+                            @Override public void run() {
+                                traceNudged.set(false);
+                                web.evaluateJavascript("window.dilmunEvent && window.dilmunEvent(\"trace\", null)", null);
+                            }
+                        });
+                    }
+                }
+            });
         }
         return engine;
+    }
+
+    /** The bulk run, with any queue the app didn't finish last time restored as interrupted. */
+    private synchronized BulkRun bulk() {
+        if (bulk == null) {
+            bulk = new BulkRun(engine(),
+                    step -> work.execute(step),
+                    status -> {
+                        emit("bulk", status);
+                        activity.keepAwake(Boolean.TRUE.equals(status.get("busy")) || "running".equals(status.get("state")));
+                    },
+                    saved -> {
+                        if (saved == null) prefs.edit().remove("bulk").apply();
+                        else prefs.edit().putString("bulk", Json.canon(saved)).apply();
+                    });
+            String saved = prefs.getString("bulk", null);
+            if (saved != null) {
+                try { bulk.restore(Json.obj(saved)); }
+                catch (RuntimeException e) { prefs.edit().remove("bulk").apply(); }
+            }
+        }
+        return bulk;
     }
 
     void close() {
@@ -165,6 +207,17 @@ final class Bridge {
     @JavascriptInterface public String tx(String id) { return call(() -> Json.parse(engine().tx(id))); }
     @JavascriptInterface public String verify() { return call(() -> engine().verify()); }
     @JavascriptInterface public String modelStatus() { return call(model::status); }
+    @JavascriptInterface public String trace(double since) { return call(() -> engine().trace((long) since)); }
+    @JavascriptInterface public String extracted() {
+        return call(() -> {
+            List<Object> out = new ArrayList<>();
+            for (Object o : engine().sources()) {
+                String id = (String) ((Map<?, ?>) o).get("id");
+                if (engine().extracted(id)) out.add(id);
+            }
+            return out;
+        });
+    }
 
     // ------------------------------------------------------------ quick actions
 
@@ -200,21 +253,35 @@ final class Bridge {
         return model.loaded() && model.useForExtraction() ? model.id() : new Agent.PatternAgent().id();
     }
 
-    /** Extract from one source with the model if it's loaded (and allowed), else the pattern agent. */
+    /**
+     * The agent for one source: the model if it's loaded (and allowed), else the
+     * pattern agent. The model's passages go into the trace as it reads them.
+     */
+    private Agent agentFor(String sourceName, ModelAgent.Progress progress) {
+        Llama l = model.llama();
+        if (l != null && model.useForExtraction())
+            return new ModelAgent(l, Policy.SCHEMA_ORDER, ModelAgent.traced(engine(), sourceName, progress));
+        return new Agent.PatternAgent();
+    }
+
+    private String sourceName(String sourceId) {
+        for (Object o : engine().sources()) {
+            Map<?, ?> m = (Map<?, ?>) o;
+            if (sourceId.equals(m.get("id"))) return String.valueOf(m.get("name"));
+        }
+        return sourceId;
+    }
+
+    /** Extract from one source. */
     @JavascriptInterface public String extract(final String sourceId) {
         return call(() -> {
+            if (bulk().isRunning()) throw new Store.Rejected("a bulk run is going: pause it to extract one source by hand");
             final long[] id = new long[1];
             id[0] = job("extract", () -> {
-                Agent agent;
-                Llama l = model.llama();
-                if (l != null && model.useForExtraction()) {
-                    agent = new ModelAgent(l, Policy.SCHEMA_ORDER, new ModelAgent.Progress() {
-                        @Override public void passage(int i, int n) { progress(id[0], "extract", Tx.m("passage", (long) i, "passages", (long) n)); }
-                        @Override public void text(String piece) { }
-                    });
-                } else {
-                    agent = new Agent.PatternAgent();
-                }
+                Agent agent = agentFor(sourceName(sourceId), new ModelAgent.Progress() {
+                    @Override public void passage(int i, int n) { progress(id[0], "extract", Tx.m("passage", (long) i, "passages", (long) n)); }
+                    @Override public void text(String piece) { }
+                });
                 Map<String, Object> r = engine().extract(sourceId, readable(), agent);
                 r.put("source", sourceId);
                 return r;
@@ -222,6 +289,28 @@ final class Bridge {
             return id[0];
         });
     }
+
+    // ------------------------------------------------------------ bulk extract
+
+    /** request: {ids: [...], names: [...], skip: bool}. Extract all is the same call with every source. */
+    @JavascriptInterface public String bulkStart(final String request) {
+        return call(() -> {
+            Map<String, Object> req = Json.obj(request);
+            List<String> ids = new ArrayList<>(), names = new ArrayList<>();
+            for (Object o : (List<?>) req.get("ids")) ids.add(String.valueOf(o));
+            Object n = req.get("names");
+            if (n instanceof List) for (Object o : (List<?>) n) names.add(String.valueOf(o));
+            BulkRun b = bulk();
+            if (!b.isRunning() && !"idle".equals(b.status().get("state")) && !b.isActive()) b.clear();
+            b.start(ids, names, !Boolean.FALSE.equals(req.get("skip")), readable(), this::agentFor);
+            return b.status();
+        });
+    }
+    @JavascriptInterface public String bulkStatus() { return call(() -> bulk().status()); }
+    @JavascriptInterface public String bulkPause() { return call(() -> { bulk().pause(); return bulk().status(); }); }
+    @JavascriptInterface public String bulkResume() { return call(() -> { bulk().resume(readable(), this::agentFor); return bulk().status(); }); }
+    @JavascriptInterface public String bulkCancel() { return call(() -> { bulk().cancel(); return bulk().status(); }); }
+    @JavascriptInterface public String bulkClear() { return call(() -> { bulk().clear(); return bulk().status(); }); }
 
     // ------------------------------------------------------------ the model
 
@@ -248,15 +337,47 @@ final class Bridge {
         final long fsize = size;
         final long[] id = new long[1];
         id[0] = job("import", () -> {
+            if (bulk().isRunning()) throw new Store.Rejected("a bulk run is going: pause it before replacing the model");
             model.importFrom(cr, uri, fname, fsize, (done, total) ->
                     progress(id[0], "import", Tx.m("bytes", done, "total", total)));
-            return model.load();
+            return loadAndNote();
         });
     }
 
-    @JavascriptInterface public String loadModel() { return call(() -> job("load", model::load)); }
-    @JavascriptInterface public String unloadModel() { return call(() -> { model.unload(); return model.status(); }); }
-    @JavascriptInterface public String removeModel() { return call(() -> { model.remove(); return model.status(); }); }
+    @JavascriptInterface public String loadModel() { return call(() -> job("load", this::loadAndNote)); }
+    @JavascriptInterface public String unloadModel() {
+        return call(() -> {
+            if (bulk().isRunning() && model.useForExtraction()) throw new Store.Rejected("a bulk run is using the model: pause it first");
+            model.unload();
+            engine().noteWork("model", "Model unloaded", Tx.m("event", "unload"));
+            return model.status();
+        });
+    }
+
+    private Map<String, Object> loadAndNote() {
+        Map<String, Object> s = model.load();
+        Map<?, ?> info = (Map<?, ?>) s.get("info");
+        engine().noteWork("model", "Model loaded: " + (info == null ? model.id() : info.get("desc")) + " · " + s.get("threads") + " threads",
+                Tx.m("event", "load", "threads", s.get("threads")));
+        return s;
+    }
+
+    /** 0 = automatic. A loaded model is reloaded with the new count. */
+    @JavascriptInterface public String setThreads(final int n) {
+        return call(() -> {
+            model.setThreads(n);
+            if (!model.loaded()) return model.status();
+            if (bulk().isRunning()) throw new Store.Rejected("saved; it applies once the bulk run is paused or finished and the model is reloaded");
+            return job("load", () -> { model.unload(); return loadAndNote(); });
+        });
+    }
+    @JavascriptInterface public String removeModel() {
+        return call(() -> {
+            if (bulk().isRunning()) throw new Store.Rejected("a bulk run is going: pause it first");
+            model.remove();
+            return model.status();
+        });
+    }
     @JavascriptInterface public String setUseModel(boolean on) { return call(() -> { model.setUseForExtraction(on); return model.status(); }); }
 
     /** Stop what the model is generating now. */

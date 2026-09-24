@@ -23,6 +23,31 @@ public final class ModelAgent implements Agent {
     public interface Progress {
         void passage(int index, int count);
         void text(String piece);
+        /** After each passage: facts the model proposed, and how many of their quotes are really in the text. */
+        default void passageDone(int index, int count, int proposed, int quoted) { }
+    }
+
+    /**
+     * Progress that also goes into the engine's trace, so the map and the
+     * activity card show each passage as the model reads it. {@code also} (may
+     * be null) gets every call too.
+     */
+    public static Progress traced(final Engine engine, final String source, final Progress also) {
+        return new Progress() {
+            @Override public void passage(int i, int n) {
+                engine.noteWork("passage", "Model reading " + source + " · passage " + i + " of " + n,
+                        Tx.m("i", (long) i, "n", (long) n, "source", source));
+                if (also != null) also.passage(i, n);
+            }
+            @Override public void text(String piece) { if (also != null) also.text(piece); }
+            @Override public void passageDone(int i, int n, int proposed, int quoted) {
+                String q = proposed == 0 ? "no facts" : proposed + (proposed == 1 ? " fact" : " facts") + " proposed, "
+                        + quoted + (quoted == 1 ? " quote" : " quotes") + " found in the text";
+                engine.noteWork("passage-done", "Passage " + i + " of " + n + ": " + q,
+                        Tx.m("i", (long) i, "n", (long) n, "proposed", (long) proposed, "quoted", (long) quoted));
+                if (also != null) also.passageDone(i, n, proposed, quoted);
+            }
+        };
     }
 
     static final int PASSAGE_CHARS = 2400;
@@ -69,10 +94,15 @@ public final class ModelAgent implements Agent {
                 return true;
             });
             raw.add(Tx.m("from", (long) from, "to", (long) to, "output", out));
+            int proposed = 0, quoted = 0;
             for (Map<String, Object> f : parse(out, text, from, to)) {
                 String key = f.get("ident") + "|" + f.get("a") + "|" + String.valueOf(f.get("v")).toLowerCase(Locale.ROOT);
-                if (seen.add(key)) facts.add(f);
+                if (!seen.add(key)) continue;
+                facts.add(f);
+                proposed++;
+                if (((Number) ((Map<?, ?>) f.get("quote")).get("start")).longValue() >= 0) quoted++;
             }
+            if (progress != null) progress.passageDone(p + 1, passages.size(), proposed, quoted);
         }
         return Tx.m("tools", new ArrayList<Object>(Arrays.asList("read_source")), "facts", facts,
                 "raw", raw, "model", llm.id());

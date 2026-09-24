@@ -1,5 +1,6 @@
 package app.dilmun.core;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -47,6 +48,10 @@ public final class Engine {
     private Store store = new Store();
     private State cached;
     private long lastWall = 0, lastCounter = 0;
+    private final Object traceLock = new Object();
+    private final ArrayDeque<Map<String, Object>> trace = new ArrayDeque<>();
+    private long traceSeq = 0;
+    private volatile Runnable traceListener;
 
     private Engine(LogBackend backend, Crypto.Signer portalKey, Crypto.Signer stewardKey, Clock clock, Agent agent) {
         this.backend = backend;
@@ -64,6 +69,8 @@ public final class Engine {
         Engine e = new Engine(backend, portalKey, stewardKey, clock, agent);
         e.store = load(backend);
         for (Map<String, Object> t : e.store.all()) e.seen(t);
+        e.note("replay", "Rebuilt state from " + plural(e.store.size(), "transaction", "transactions") + " on disk",
+                Tx.m("txs", (long) e.store.size()));
         if (e.store.genesisId() == null) {
             e.commit(stewardKey, Tx.STEWARD, "genesis", "system", Tx.m(
                     "steward", stewardKey.pub(),
@@ -102,6 +109,9 @@ public final class Engine {
     private Map<String, Object> commit(Crypto.Signer key, String chain, String kind, String tier,
                                        Map<String, Object> payload, Map<String, Object> meta) {
         Map<String, Object> tx = Tx.make(key, chain, store.tip(chain), nextHlc(), kind, tier, payload, meta);
+        boolean steward = Tx.STEWARD.equals(chain);
+        note("sign", "Signed " + kind + " with the " + (steward ? "steward's" : "portal's") + " key",
+                Tx.m("by", steward ? "steward" : "portal", "kind", kind));
         try {
             store.append(tx);
         } finally {
@@ -110,8 +120,71 @@ public final class Engine {
         backend.putTx(tx);
         seen(tx);
         cached = null;
+        note("commit", "Committed #" + store.size() + " " + kind + " to " + tier,
+                Tx.m("kind", kind, "tier", tier, "n", (long) store.size(), "id", Tx.id(tx).substring(0, 10)));
         return tx;
     }
+
+    // ------------------------------------------------------------ trace
+
+    /**
+     * What the engine just did, step by step, for the live map and the activity
+     * card. Kept in memory only (the log is the record; this is a view of work as
+     * it happens), and capped, so a screen that never reads it costs nothing but
+     * a little memory. It has its own lock, so the screens can read it while a
+     * slow agent is working.
+     */
+    public List<Object> trace(long since) {
+        List<Object> out = new ArrayList<>();
+        synchronized (traceLock) {
+            for (Map<String, Object> ev : trace) if (((Number) ev.get("seq")).longValue() > since) out.add(ev);
+        }
+        return out;
+    }
+
+    /** Called after each new trace event, on whichever thread recorded it. */
+    public void onTrace(Runnable listener) { traceListener = listener; }
+
+    private void note(String step, String text, Map<String, Object> data) {
+        Map<String, Object> ev = new TreeMap<>(data);
+        ev.put("step", step);
+        ev.put("text", text);
+        synchronized (traceLock) {
+            ev.put("seq", ++traceSeq);
+            ev.put("t", clock.now());
+            trace.addLast(ev);
+            while (trace.size() > Policy.TRACE_KEEP) trace.removeFirst();
+        }
+        Runnable l = traceListener;
+        if (l != null) l.run();
+    }
+
+    /** Steps an agent or the screens report while they work: never written to the log. */
+    public static final List<String> WORK_STEPS = Collections.unmodifiableList(Arrays.asList(
+            "passage", "passage-done", "bulk", "model"));
+
+    /** Record a step taken outside the engine (a passage read, a bulk run moving on, a model loaded). */
+    public void noteWork(String step, String text, Map<String, Object> data) {
+        if (!WORK_STEPS.contains(step)) throw new IllegalArgumentException("not a work step: " + step);
+        note(step, text, data == null ? Tx.m() : data);
+    }
+
+    private interface Body<T> { T run(); }
+
+    /** A request from the screens: traced from the hand-off to the answer, refusals included. */
+    private <T> T request(String what, boolean steward, Body<T> body) {
+        note("request", (steward ? "Steward: " : "Request: ") + what, Tx.m("what", what, "steward", steward));
+        try {
+            T r = body.run();
+            note("answer", "Answered: " + what, Tx.m("what", what, "steward", steward));
+            return r;
+        } catch (Store.Rejected e) {
+            note("refuse", "Refused: " + e.getMessage(), Tx.m("what", what, "reason", String.valueOf(e.getMessage())));
+            throw e;
+        }
+    }
+
+    private static String plural(long n, String one, String many) { return n + " " + (n == 1 ? one : many); }
 
     public synchronized State state() {
         if (cached == null) cached = State.replay(store.valid());
@@ -130,6 +203,10 @@ public final class Engine {
 
     /** Record what each source holds now. Commits only when something changed. */
     public synchronized Map<String, Object> scan(Sources src) {
+        return request("scan sources", false, () -> doScan(src));
+    }
+
+    private Map<String, Object> doScan(Sources src) {
         live();
         State st = state();
         List<Map<String, Object>> docs = src.list();
@@ -141,6 +218,8 @@ public final class Engine {
                 names.put(id, d.get("name"));
             }
         }
+        note("scan", "Scanned " + plural(docs.size(), "source", "sources") + " · " + places.size() + " new or changed",
+                Tx.m("total", (long) docs.size(), "changed", (long) places.size()));
         if (!places.isEmpty()) commit(portalKey, portal, "map", "system", Tx.m("places", places, "names", names), null);
         return Tx.m("changed", (long) places.size(), "total", (long) docs.size());
     }
@@ -158,6 +237,8 @@ public final class Engine {
         if (digest == null) throw new Store.Rejected("source is not in the workspace map");
         TreeMap<Long, List<String>> vs = st.skills.get("ingest");
         if (vs == null) throw new Store.Rejected("skill is not in the registry");
+        note("steer", "Steered: skill ingest v" + vs.lastKey() + " · source " + nameOf(st, sourceId),
+                Tx.m("skill", "ingest", "version", vs.lastKey(), "source", nameOf(st, sourceId)));
         long now = nextHlc()[0];
         String did = "dir:" + Crypto.H(Arrays.asList(portal, now, sourceId, (long) store.size())).substring(0, 16);
         commit(portalKey, portal, "directive", "system", Tx.m(
@@ -178,6 +259,9 @@ public final class Engine {
     public Map<String, Object> run(String did, Sources src, Agent with) {
         Object[] prep = prepareRun(did, src);
         Map<String, Object> proposal = with.propose(new TreeMap<>(castMap(prep[0])), (String) prep[1]);   // the only agent call
+        Object fs = proposal.get("facts");
+        long n = fs instanceof List ? ((List<?>) fs).size() : 0;
+        note("propose", "Agent proposed " + plural(n, "fact", "facts"), Tx.m("facts", n));
         return finishRun(did, (String) prep[1], proposal, with);
     }
 
@@ -193,9 +277,14 @@ public final class Engine {
         Map<String, Object> d = st.openDirectives.get(did);
         if (d == null || !portal.equals(d.get("portal"))) throw new Store.Rejected("no such open directive on this portal");
         if (nextHlc()[0] >= ((Number) d.get("expires")).longValue()) throw new Store.Rejected("directive expired");
-        String text = src.read((String) d.get("source"));
+        String source = (String) d.get("source");
+        note("deploy", "Deployed the agent on " + did.substring(4, 12) + " · budget " + d.get("budget"),
+                Tx.m("directive", did, "budget", d.get("budget")));
+        String text = src.read(source);
         if (text == null) throw new Store.Rejected("source is not available on this device");
         if (!Crypto.textHash(text).equals(d.get("source_hash"))) throw new Store.Rejected("source changed since the directive; rescan");
+        note("read", "Agent read " + nameOf(st, source) + " · " + plural(text.length(), "character", "characters"),
+                Tx.m("source", nameOf(st, source), "chars", (long) text.length()));
         return new Object[]{d, text};
     }
 
@@ -238,9 +327,12 @@ public final class Engine {
             else if (accepted >= budget) reason = "over budget";
             if (reason != null) {
                 rejected.add(Tx.m("i", (long) i, "a", a, "reason", reason));
+                if (i < FACT_NOTES) note("fact", "Refused " + factLine(ident, a, vo) + " · " + reason,
+                        Tx.m("kept", false, "reason", reason));
                 continue;
             }
             String name = ((String) ident.get(1)).trim(), val = ((String) vo).trim();
+            if (i < FACT_NOTES) note("fact", "Kept " + factLine(ident, a, vo), Tx.m("kept", true));
             long nu = no instanceof Number ? Math.max(0, Math.min(1000, ((Number) no).longValue())) : 500L;
             String e = State.identId("name", name);
             Object v = val;
@@ -255,12 +347,24 @@ public final class Engine {
             }
             accepted++;
         }
+        if (facts.size() > FACT_NOTES)
+            note("fact", "…and " + plural(facts.size() - FACT_NOTES, "more fact", "more facts") + " checked", Tx.m("more", (long) (facts.size() - FACT_NOTES)));
+        note("check", "Checked quotes, schema, tools, budget: " + accepted + " kept · " + rejected.size() + " refused",
+                Tx.m("accepted", accepted, "rejected", (long) rejected.size()));
         Map<String, Object> tx = commit(portalKey, portal, "assert", "episode:" + did,
                 Tx.m("proposal", proposal, "datoms", datoms, "rejected", rejected),
                 Tx.m("directive", did, "agent", with.id(), "skill", skill, "skill_version", version,
                         "skill_current", st.skills.get(skill).lastKey(), "model_hash", with.id(),
                         "source", source, "source_hash", d.get("source_hash")));
         return Tx.m("tx", Tx.id(tx), "accepted", accepted, "rejected", rejected, "agent", with.id());
+    }
+
+    /** Facts checked one by one in the trace; the rest are summed up, so a big result can't flood it. */
+    static final int FACT_NOTES = 24;
+
+    private static String factLine(List<Object> ident, String a, Object v) {
+        String e = ident.size() == 2 ? String.valueOf(ident.get(1)).trim() : "?";
+        return e + " · " + a + " · " + (v == null ? "?" : String.valueOf(v).trim());
     }
 
     private static boolean quoteMatches(String text, int start, int end, String quote) {
@@ -274,31 +378,104 @@ public final class Engine {
 
     /** Issue a directive for one source and run it straight away. */
     public Map<String, Object> extract(String sourceId, Sources src, Agent with) {
-        String did = issue(sourceId, Policy.DEFAULT_BUDGET);
-        return run(did, src, with);
+        return request("extract " + nameOf(state(), sourceId), false, () -> run(issue(sourceId, Policy.DEFAULT_BUDGET), src, with));
+    }
+
+    /**
+     * Whether this source already has a result for exactly what it holds now.
+     * A bulk run skips these; a source whose file changed since is extracted again.
+     */
+    public synchronized boolean extracted(String sourceId) {
+        State st = state();
+        String now = st.placeHash(portal, sourceId);
+        if (now == null) return false;
+        for (Map<String, Object> r : st.results)
+            if (sourceId.equals(r.get("source")) && now.equals(r.get("source_hash"))) return true;
+        return false;
     }
 
     public Map<String, Object> extract(String sourceId, Sources src) { return extract(sourceId, src, agent); }
 
     /**
-     * The settled facts most related to a question, for Ask. A plain word-overlap
-     * score over entity, attribute and value; BM25 and Datalog come with the query slice.
+     * The facts most related to a question, for Ask: settled facts (culture)
+     * first, then facts still held at the gate, marked as unconfirmed so the
+     * model and the reader can tell them apart. A plain word-overlap score over
+     * entity, attribute and value (counted double) and the fact's quote; BM25
+     * and Datalog come with the query slice. Reads only: nothing is committed,
+     * but the read is traced, so the map and the activity card show it.
      */
     public synchronized List<Object> recall(String question, int limit) {
         Set<String> words = words(question);
-        List<Object> rows = memory("");
+        State st = state();
+        Map<String, String> names = st.names();
         List<Object[]> scored = new ArrayList<>();
-        for (Object o : rows) {
-            Map<String, Object> r = castMap(o);
-            Set<String> w = words(r.get("entity") + " " + String.valueOf(r.get("a")).replace('_', ' ') + " " + r.get("v"));
-            int hit = 0;
-            for (String x : w) if (words.contains(x)) hit++;
-            if (hit > 0) scored.add(new Object[]{hit, r});
+        Set<String> seen = new HashSet<>();
+        for (Map<String, Object> d : st.tier("culture")) {
+            if ("name".equals(d.get("a"))) continue;
+            String e = st.find((String) d.get("e"));
+            String ent = names.containsKey(e) ? names.get(e) : e, val = display(st, names, d.get("v"));
+            if (!seen.add(Json.canon(Arrays.asList(ent.toLowerCase(Locale.ROOT), d.get("a"), val.toLowerCase(Locale.ROOT))))) continue;
+            Map<String, Object> row = recallRow(ent, d, val, ((Number) d.get("support")).longValue(), "settled", quoteOf(d));
+            double score = score(words, row);
+            if (score > 0) scored.add(new Object[]{score + 0.5, row});
         }
-        Collections.sort(scored, (x, y) -> Integer.compare((Integer) y[0], (Integer) x[0]));
+        Set<String> promoted = new HashSet<>();
+        for (Map<String, Object> d : st.tier("culture")) promoted.add(st.factKey("culture", d));
+        for (Map.Entry<String, List<Map<String, Object>>> g : groupEpisodes(st).entrySet()) {
+            Map<String, Object> d = g.getValue().get(0);
+            if ("name".equals(d.get("a")) || promoted.contains(g.getKey())) continue;
+            String e = st.find((String) d.get("e"));
+            String ent = names.containsKey(e) ? names.get(e) : e, val = display(st, names, d.get("v"));
+            if (!seen.add(Json.canon(Arrays.asList(ent.toLowerCase(Locale.ROOT), d.get("a"), val.toLowerCase(Locale.ROOT))))) continue;
+            String best = quoteOf(d);                               // the quote, of all its sources', that fits the question best
+            int bestHits = -1;
+            for (Map<String, Object> x : g.getValue()) {
+                Set<String> qw = words(quoteOf(x));
+                int hits = 0;
+                for (String w : words) if (qw.contains(w)) hits++;
+                if (hits > bestHits) { bestHits = hits; best = quoteOf(x); }
+            }
+            Map<String, Object> row = recallRow(ent, d, val, distinctSources(g.getValue()), "held", best);
+            double score = score(words, row);
+            if (score > 0) scored.add(new Object[]{score, row});
+        }
+        Collections.sort(scored, (x, y) -> Double.compare((Double) y[0], (Double) x[0]));
         List<Object> out = new ArrayList<>();
-        for (Object[] x : scored) { if (out.size() >= limit) break; out.add(x[1]); }
+        long settled = 0, held = 0;
+        for (Object[] x : scored) {
+            if (out.size() >= limit) break;
+            out.add(x[1]);
+            if ("settled".equals(castMap(x[1]).get("status"))) settled++; else held++;
+        }
+        note("recall", "Ask read memory: " + plural(settled, "settled fact", "settled facts") + " and "
+                        + plural(held, "unconfirmed fact", "unconfirmed facts") + " match the question",
+                Tx.m("settled", settled, "held", held));
         return out;
+    }
+
+    /** Longest quote shown to the model with a recalled fact. */
+    static final int RECALL_QUOTE = 200;
+
+    private static String quoteOf(Map<String, Object> d) {
+        Object q = d.get("quote");
+        return q instanceof Map && ((Map<?, ?>) q).get("text") instanceof String ? ((String) ((Map<?, ?>) q).get("text")).trim() : "";
+    }
+
+    private static Map<String, Object> recallRow(String ent, Map<String, Object> d, String val, long support, String status, String quote) {
+        if (quote.length() > RECALL_QUOTE) quote = quote.substring(0, RECALL_QUOTE - 1) + "…";
+        return Tx.m("entity", ent, "a", d.get("a"), "v", val, "support", support, "nu", d.get("nu"),
+                "status", status, "quote", quote);
+    }
+
+    private static double score(Set<String> words, Map<String, Object> row) {
+        Set<String> fact = words(row.get("entity") + " " + String.valueOf(row.get("a")).replace('_', ' ') + " " + row.get("v"));
+        Set<String> quote = words(String.valueOf(row.get("quote")));
+        double s = 0;
+        for (String w : words) {
+            if (fact.contains(w)) s += 2;
+            else if (quote.contains(w)) s += 1;
+        }
+        return s;
     }
 
     private static final Set<String> STOP = new HashSet<>(Arrays.asList(
@@ -316,6 +493,10 @@ public final class Engine {
 
     /** Startup step: close this portal's directives that have passed their deadline. */
     public synchronized long reconcile() {
+        return request("expire stale directives", false, this::doReconcile);
+    }
+
+    private long doReconcile() {
         live();
         long n = 0;
         for (Map.Entry<String, Map<String, Object>> e : new TreeMap<>(state().openDirectives).entrySet()) {
@@ -332,6 +513,10 @@ public final class Engine {
 
     /** Copy a fact into culture once k distinct sources agree, or the steward approved it. */
     public synchronized long gate() {
+        return request("run the gate", false, this::doGate);
+    }
+
+    private long doGate() {
         live();
         State st = state();
         notPaused(st);
@@ -365,13 +550,24 @@ public final class Engine {
             copy.put("origin_tx", rep.get("tx"));
             copy.put("derived_from", null);
             copy.put("support", support);
+            note("promote", "Gate: " + factText(st, rep) + " · " + (approved && support < Policy.GATE_K ? "approved" : plural(support, "source", "sources")),
+                    Tx.m("support", support, "approved", approved && support < Policy.GATE_K));
             commit(portalKey, portal, "promote", "culture", Tx.m(
                     "datoms", Collections.singletonList(copy),
                     "decision", Tx.m("key", key, "support", support,
                             "rule", approved && support < Policy.GATE_K ? "approved" : "auto")), null);
             n++;
         }
+        long waiting = held().size();
+        if (waiting > 0) note("hold", "Gate held " + plural(waiting, "fact", "facts") + " for more sources or approval", Tx.m("held", waiting));
         return n;
+    }
+
+    private static String factText(State st, Map<String, Object> d) {
+        Map<String, String> names = st.names();
+        String e = st.find((String) d.get("e"));
+        String ent = names.containsKey(e) ? names.get(e) : e;
+        return "name".equals(d.get("a")) ? "entity " + ent : ent + " " + d.get("a") + " " + display(st, names, d.get("v"));
     }
 
     private static TreeMap<String, List<Map<String, Object>>> groupEpisodes(State st) {
@@ -396,12 +592,13 @@ public final class Engine {
     public synchronized void approve(List<String> keys) {
         List<String> sorted = new ArrayList<>(keys);
         Collections.sort(sorted);
-        commit(stewardKey, Tx.STEWARD, "approve", "system", Tx.m("keys", new ArrayList<Object>(sorted)), null);
+        request("approve " + plural(sorted.size(), "held fact", "held facts"), true,
+                () -> commit(stewardKey, Tx.STEWARD, "approve", "system", Tx.m("keys", new ArrayList<Object>(sorted)), null));
     }
 
-    public synchronized void pause() { commit(stewardKey, Tx.STEWARD, "pause", "system", Tx.m(), null); }
+    public synchronized void pause() { request("pause the arbiters", true, () -> commit(stewardKey, Tx.STEWARD, "pause", "system", Tx.m(), null)); }
 
-    public synchronized void resume() { commit(stewardKey, Tx.STEWARD, "resume", "system", Tx.m(), null); }
+    public synchronized void resume() { request("resume the arbiters", true, () -> commit(stewardKey, Tx.STEWARD, "resume", "system", Tx.m(), null)); }
 
     public synchronized void publishSkill(String name, long version, List<String> tools) {
         List<Object> t = new ArrayList<Object>(tools);
@@ -546,12 +743,19 @@ public final class Engine {
 
     /** Re-read the whole log from disk into a fresh store and replay it. */
     public synchronized Map<String, Object> verify() {
+        return request("verify the log", false, this::doVerify);
+    }
+
+    private Map<String, Object> doVerify() {
         try {
             Store fresh = load(backend);
             String h = State.replay(fresh.valid()).stateHash();
+            note("verify", "Re-read " + plural(fresh.size(), "transaction", "transactions") + " from disk · every hash, signature and link checks out",
+                    Tx.m("ok", true, "count", (long) fresh.size()));
             return Tx.m("ok", true, "count", (long) fresh.size(), "state", h.substring(0, 12),
                     "matches", h.equals(state().stateHash()), "forks", (long) fresh.forkProofs().size());
         } catch (RuntimeException e) {
+            note("verify", "Verification failed: " + e.getMessage(), Tx.m("ok", false));
             return Tx.m("ok", false, "error", String.valueOf(e.getMessage()));
         }
     }

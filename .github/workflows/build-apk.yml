@@ -18,7 +18,11 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      # Name the packages: the action's default includes the legacy "tools"
+      # package, which current SDK managers no longer have.
       - uses: android-actions/setup-android@v3
+        with:
+          packages: "platform-tools platforms;android-35 build-tools;35.0.0"
 
       - uses: gradle/actions/setup-gradle@v4
         with:

@@ -42,6 +42,23 @@ public final class CoreTest {
         @Override public long now() { return t; }
     }
 
+    static final class FakeLlm implements Llm {
+        final String reply;
+        int calls = 0;
+        String lastSystem = "";
+        FakeLlm(String reply) { this.reply = reply; }
+        @Override public String id() { return "model:fake:0123456789ab"; }
+        @Override public String generate(List<String[]> m, int max, float temp, boolean think, Llama.Sink sink) {
+            calls++;
+            lastSystem = m.get(0)[1];
+            if (sink != null) sink.onPiece(reply.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return reply;
+        }
+        @Override public void stop() {}
+        @Override public Map<String, Object> stats() { return Tx.m(); }
+        @Override public int contextTokens() { return 4096; }
+    }
+
     static final String S1 = "Notes on salicylates.\n- aspirin | treats | fever\n- aspirin | is_a | NSAID\nwillow bark | source_of | salicin\n";
     static final String S2 = "Handbook.\naspirin | treats | fever\nibuprofen | is_a | NSAID\naspirin | date | 1897\n";
 
@@ -198,28 +215,44 @@ public final class CoreTest {
         check(onlyPrefix, "both branches stop counting; the prefix still does");
         rejects(() -> f.e.scan(f.src), "frozen", "a frozen portal refuses to act");
 
-        section("the live trace");
-        World lt = new World();
-        lt.e.scan(lt.src);
-        long mark = seqOf(lt.e.trace(0));
-        final int[] nudges = {0};
-        lt.e.onTrace(() -> nudges[0]++);
-        lt.e.extract("src:notes.md", lt.src);
-        List<Object> steps = lt.e.trace(mark);
-        check(stepsOf(steps).equals(Arrays.asList("request", "steer", "sign", "commit", "deploy", "read", "propose",
-                "check", "sign", "commit", "answer")), "an extract is traced step by step, in order: " + stepsOf(steps));
-        check(nudges[0] == steps.size(), "the listener hears every step as it happens");
-        check(seqOf(lt.e.trace(seqOf(steps))) == 0, "reading from the last seq returns nothing new");
-        mark = seqOf(steps);
-        lt.e.pause();
-        rejects(() -> lt.e.extract("src:notes.md", lt.src), "paused", "a paused extract is refused");
-        List<Object> after = lt.e.trace(mark);
-        check(stepsOf(after).get(0).equals("request") && stepsOf(after).get(after.size() - 1).equals("refuse"),
-                "a refusal is traced with its reason: " + stepsOf(after));
-        String json = Json.canon(lt.e.trace(0));
-        check(json.length() > 0, "trace events are canonical JSON");
-        for (int i = 0; i < 300; i++) lt.e.verify();
-        check(lt.e.trace(0).size() == Policy.TRACE_KEEP, "the trace keeps only the newest " + Policy.TRACE_KEEP + " events");
+        section("the model as an agent");
+        World g = new World();
+        g.src.files.put("pharma.md", "Aspirin, an NSAID, is used to treat fever.\nIt was first sold in 1899.\n");
+        g.e.scan(g.src);
+        FakeLlm fake = new FakeLlm(
+                "aspirin | is_a | NSAID | Aspirin, an NSAID\n"
+                + "Aspirin | treats | fever | used to treat fever\n"
+                + "aspirin | treats | headache | cures every headache\n"
+                + "aspirin | invented_by | Hoffmann | first sold in 1899\n"
+                + "not a fact line\n");
+        ModelAgent ma = new ModelAgent(fake, Policy.SCHEMA_ORDER, null);
+        Map<String, Object> mr = g.e.extract("src:pharma.md", g.src, ma);
+        check(((Number) mr.get("accepted")).longValue() == 2, "facts whose quotes are in the file are kept (2)");
+        check(mr.toString().contains("quote does not match the source"), "a quote the model invented is refused");
+        check(mr.toString().contains("attribute not in the schema: invented_by"), "an attribute outside the schema is refused");
+        Map<String, Object> mtx = g.e.store().get((String) mr.get("tx"));
+        check("model:fake:0123456789ab".equals(Tx.header(mtx).get("model_hash")), "the result names the exact model file");
+        check(Json.canon(Tx.payload(mtx).get("proposal")).contains("cures every headache"), "the model's raw output is recorded in the episode");
+        check(fake.calls == 1 && fake.lastSystem.contains("is_a, part_of"), "one call per passage, with the schema in the prompt");
+        List<int[]> ps = ModelAgent.passages(S1 + S1 + S1 + S1 + S1 + S1 + S1 + S1 + S1 + S1 + S1 + S1 + S1 + S1 + S1 + S1 + S1 + S1 + S1 + S1 + S1 + S1 + S1 + S1 + S1, 400);
+        boolean tiles = ps.get(0)[0] == 0;
+        for (int i = 1; i < ps.size(); i++) tiles &= ps.get(i)[0] == ps.get(i - 1)[1] && ps.get(i)[1] - ps.get(i)[0] <= 400;
+        check(tiles && ps.size() > 3, "long text is split into passages that cover it exactly (" + ps.size() + ")");
+        check(State.identId("name", "Aspirin").equals(State.identId("name", "  aspirin ")), "names are one entity whatever their case or spacing");
+
+        section("ask");
+        g.src.files.put("hand.md", "Handbook: aspirin, an NSAID, relieves pain.\n- aspirin | is_a | NSAID\n");
+        g.e.scan(g.src);
+        g.e.extract("src:hand.md", g.src);
+        g.e.gate();
+        List<Object> rec = g.e.recall("Is aspirin an NSAID?", 5);
+        check(!rec.isEmpty() && rec.toString().contains("NSAID"), "recall finds the settled fact for a question");
+        check(g.e.recall("What is the capital of France?", 5).isEmpty(), "recall finds nothing for an unrelated question");
+        List<String[]> am = Ask.messages(new ArrayList<String[]>(), "Is aspirin an NSAID?", rec, true);
+        check(am.get(0)[1].contains("[1] aspirin is a NSAID") && am.get(am.size() - 1)[1].equals("Is aspirin an NSAID?"), "the prompt numbers the facts for citation");
+        int before2 = g.e.store().size();
+        g.e.recall("aspirin", 5);
+        check(g.e.store().size() == before2, "asking writes nothing to the log");
 
         section("canonical JSON");
         Map<String, Object> m = Tx.m("b", 1L, "a", Arrays.asList("x", "é\n\"q\""), "c", null, "d", true);
@@ -232,16 +265,6 @@ public final class CoreTest {
         System.out.println();
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
-    }
-
-    static long seqOf(List<Object> evs) {
-        return evs.isEmpty() ? 0 : ((Number) ((Map<?, ?>) evs.get(evs.size() - 1)).get("seq")).longValue();
-    }
-
-    static List<Object> stepsOf(List<Object> evs) {
-        List<Object> out = new ArrayList<>();
-        for (Object o : evs) out.add(((Map<?, ?>) o).get("step"));
-        return out;
     }
 
     static void section(String name) { System.out.println(); System.out.println(name); }

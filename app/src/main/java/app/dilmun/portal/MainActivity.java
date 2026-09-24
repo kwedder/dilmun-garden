@@ -22,6 +22,7 @@ import android.widget.FrameLayout;
  */
 public final class MainActivity extends Activity {
     private static final int PICK_TREE = 42;
+    private static final int PICK_MODEL = 43;
     private static final int BG = 0xFF080C11;
 
     private WebView web;
@@ -75,13 +76,36 @@ public final class MainActivity extends Activity {
         startActivityForResult(i, PICK_TREE);
     }
 
+    void pickModel() {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        i.setType("*/*");
+        startActivityForResult(i, PICK_MODEL);
+    }
+
+    void openLink(String url) {
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
+        } catch (RuntimeException e) {
+            // no browser; nothing to do
+        }
+    }
+
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == PICK_TREE && resultCode == RESULT_OK && data != null && data.getData() != null) {
+        if (resultCode != RESULT_OK || data == null || data.getData() == null) return;
+        if (requestCode == PICK_TREE) {
             Uri tree = data.getData();
             getContentResolver().takePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION);
             bridge.onTreePicked(tree);
+        } else if (requestCode == PICK_MODEL) {
+            bridge.onModelPicked(data.getData());
         }
+    }
+
+    @Override protected void onDestroy() {
+        if (bridge != null) bridge.close();
+        super.onDestroy();
     }
 
     @Override public void onBackPressed() {

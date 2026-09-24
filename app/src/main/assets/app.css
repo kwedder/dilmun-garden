@@ -9,6 +9,7 @@
   --mono: ui-monospace, "Roboto Mono", "SFMono-Regular", Menlo, Consolas, monospace;
 }
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 html,body{height:100%; margin:0}
 body{background:var(--bg); color:var(--ink); font:15px/1.5 var(--sans); -webkit-tap-highlight-color:transparent}
 #shell{height:100%; display:flex; flex-direction:column}
@@ -76,8 +77,8 @@ button:disabled{opacity:.45}
 .search input{width:100%; font:15px var(--sans); color:var(--ink); background:var(--plate); border:1px solid var(--line2); border-radius:10px; padding:12px 14px}
 .search input:focus{outline:2px solid var(--steel); outline-offset:1px}
 
-.tabs{display:grid; grid-template-columns:repeat(5,1fr); border-top:1px solid var(--line); background:var(--bg)}
-.tabs button{background:transparent; border:0; border-radius:0; min-height:54px; padding:0 4px; font:500 13px/1 var(--sans); color:var(--muted); position:relative}
+.tabs{display:grid; grid-template-columns:repeat(6,1fr); border-top:1px solid var(--line); background:var(--bg)}
+.tabs button{background:transparent; border:0; border-radius:0; min-height:54px; padding:0 2px; font:500 12.5px/1 var(--sans); color:var(--muted); position:relative}
 .tabs button[aria-current="page"]{color:var(--ink)}
 .tabs button[aria-current="page"]::before{content:""; position:absolute; top:0; left:25%; right:25%; height:2px; background:var(--steel); border-radius:0 0 2px 2px}
 
@@ -94,3 +95,40 @@ button:disabled{opacity:.45}
   .tab{animation:fade .18s ease-out}
   @keyframes fade{from{opacity:.4}to{opacity:1}}
 }
+
+/* ------------------------------------------------------------ ask */
+.ask-tab{display:block}
+.ask{height:100%; max-width:720px; margin:0 auto; display:flex; flex-direction:column; padding:12px 16px 0; gap:10px}
+.model-card{flex:none}
+.model-card.compact .note, .model-card.compact .check, .model-card.compact .row{display:none}
+.model-card.compact{padding:10px 14px; cursor:pointer}
+.m.mono{font:400 11.5px/1.45 var(--mono); color:var(--muted); margin-top:4px; overflow-wrap:anywhere}
+.check{display:flex; align-items:center; gap:8px; font-size:13.5px; color:var(--soft)}
+.check input{width:18px; height:18px; accent-color:var(--steel)}
+.progress{height:4px; background:var(--line); border-radius:4px; overflow:hidden}
+.progress i{display:block; height:100%; width:0; background:var(--steel); transition:width .2s}
+.pill.loaded{color:var(--good); border-color:rgba(127,184,154,.4)}
+.pill.busy{color:var(--warn); border-color:rgba(217,164,65,.45)}
+
+.thread{flex:1; min-height:0; overflow-y:auto; display:flex; flex-direction:column; gap:12px; padding:4px 0 8px}
+.thread .empty-chat{margin:auto 0; color:var(--muted); font-size:14px; text-align:left; max-width:52ch}
+.msg{max-width:88%; padding:10px 12px; border-radius:12px; line-height:1.5; white-space:pre-wrap; overflow-wrap:anywhere}
+.msg.user{align-self:flex-end; background:#18263A; border:1px solid #243A57; border-bottom-right-radius:4px}
+.msg.bot{align-self:flex-start; background:var(--plate); border:1px solid var(--line); border-bottom-left-radius:4px}
+.msg.bot.err{border-color:rgba(217,138,126,.5)}
+.msg .cite{font:500 11.5px var(--mono); color:var(--human)}
+.msg .caret{display:inline-block; width:7px; height:14px; background:var(--steel); vertical-align:-2px; margin-left:2px; animation:blink 1s steps(2) infinite}
+@keyframes blink{50%{opacity:0}}
+.msg details{margin-top:8px; white-space:normal}
+.msg summary{font:500 11px/1.4 var(--mono); letter-spacing:.04em; color:var(--muted); cursor:pointer}
+.msg details .facts-used{font:400 12px/1.5 var(--mono); color:var(--soft); margin-top:4px}
+.msg details .thinking{font-size:13px; color:var(--muted); white-space:pre-wrap; margin-top:4px}
+.msg .stats{font:400 11px/1.4 var(--mono); color:var(--faint); margin-top:6px; white-space:normal}
+
+.composer{flex:none; border-top:1px solid var(--line); padding:8px 0 10px; display:flex; flex-direction:column; gap:6px; background:var(--bg)}
+.opts{display:flex; gap:16px; flex-wrap:wrap}
+.send-row{display:flex; gap:8px; align-items:flex-end}
+.send-row textarea{flex:1; resize:none; max-height:140px; font:15px/1.4 var(--sans); color:var(--ink); background:var(--plate); border:1px solid var(--line2); border-radius:10px; padding:11px 12px}
+.send-row textarea:focus{outline:2px solid var(--steel); outline-offset:1px}
+.send-row button{min-width:74px}
+.list li.working .t::after{content:" · working"; color:var(--warn); font-weight:400}

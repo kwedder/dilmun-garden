@@ -72,8 +72,14 @@ public final class State {
         if (!parent.containsKey(lo)) parent.put(lo, lo);
     }
 
+    /** Entity ID from an identity. Names are compared case- and spacing-insensitively. */
     public static String identId(String attr, Object value) {
-        return "e:" + Crypto.H(Arrays.asList("ident", attr, value)).substring(0, 24);
+        Object v = value instanceof String ? norm((String) value) : value;
+        return "e:" + Crypto.H(Arrays.asList("ident", attr, v)).substring(0, 24);
+    }
+
+    public static String norm(String s) {
+        return s.trim().replaceAll("\\s+", " ").toLowerCase(java.util.Locale.ROOT);
     }
 
     public String factKey(String tier, Map<String, Object> d) {

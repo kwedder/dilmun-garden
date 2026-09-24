@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write   # to publish each APK as a release asset
 
 jobs:
   build:
@@ -50,7 +50,24 @@ jobs:
       - name: Build the APK
         run: gradle --no-daemon :app:assembleDebug
 
+      # Every build is published as a pre-release with the APK attached, so it
+      # can be downloaded from the Releases page (release assets don't count
+      # against the account's Actions artifact storage).
+      - name: Publish the APK as a release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          short="${GITHUB_SHA::7}"
+          tag="apk-${GITHUB_RUN_NUMBER}-${short}"
+          cp app/build/outputs/apk/debug/app-debug.apk "dilmun-portal-${short}.apk"
+          gh release create "$tag" "dilmun-portal-${short}.apk" \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "Dilmun portal APK · ${GITHUB_REF_NAME} · ${short}" \
+            --notes "Debug APK built from ${GITHUB_REF_NAME} at ${GITHUB_SHA}. Core tests passed before this build."
+
+      # Also kept as a workflow artifact when storage allows; a full quota doesn't fail the build.
       - uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: dilmun-portal-apk
           path: app/build/outputs/apk/debug/app-debug.apk

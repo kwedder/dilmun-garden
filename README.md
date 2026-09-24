@@ -47,7 +47,8 @@ Keep `dilmun.jks` somewhere safe and out of the repository (`.gitignore` already
 3. **Work**: tap **Run the gate**. Facts that two distinct sources agree on are copied into culture. The rest are held, and **Approve** signs a steward approval that lets one through.
 4. **Memory**: the settled facts, K.
 5. **Log**: every transaction, newest first. **Verify the log** re-reads everything from disk and re-checks every hash, signature and chain link.
-6. **Map**: the interactive 3D map of the system, with live numbers from this device in each part's panel.
+6. **Map**: the portal working live, in 3D. Every step the engine takes (a request, steering, a signature, a commit, the agent reading and proposing, the checks, the gate, a refusal) travels along the edge it really uses the moment it happens, lights up the part that receives it, and lands in the **Live activity** feed with its time. **Extract**, **Gate** and **Verify** on the feed let you act without leaving the map, and work started on any other tab plays when you come back (anything over a minute old goes straight to the feed). Tap a part for its live counts and its last activity.
+   - **Tour** is the guided walkthrough of one question through the whole design, the way a game teaches a new screen. It's offered once on your first visit and is always one tap away; live activity waits while it runs.
 
 Try editing a file in your folder after mapping it: an extract is refused until you rescan. Pause on the Work tab and try to extract: the arbiters refuse.
 
@@ -61,10 +62,11 @@ core/                      plain Java, no Android: the part the invariants are a
   Store.java               the log's own rules: signatures, roles, chains, forks,
                            directive lifecycle, skill versions
   State.java               everything derived by replay; K = C∘F; the state hash
-  Engine.java              the portal: arbiters, gate, steward actions, reads
+  Engine.java              the portal: arbiters, gate, steward actions, reads,
+                           and the live trace of each step for the map
   Agent.java               the agent interface, and the pattern agent
   Policy.java              budgets, expiry, the gate's k, default schema and skills
-  src/test/.../CoreTest    40 checks, run by CI before every build
+  src/test/.../CoreTest    47 checks, run by CI before every build
   src/test/.../DevServer   desktop preview of the screens against the real core
 
 app/                       the Android shell

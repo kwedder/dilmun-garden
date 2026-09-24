@@ -198,6 +198,29 @@ public final class CoreTest {
         check(onlyPrefix, "both branches stop counting; the prefix still does");
         rejects(() -> f.e.scan(f.src), "frozen", "a frozen portal refuses to act");
 
+        section("the live trace");
+        World lt = new World();
+        lt.e.scan(lt.src);
+        long mark = seqOf(lt.e.trace(0));
+        final int[] nudges = {0};
+        lt.e.onTrace(() -> nudges[0]++);
+        lt.e.extract("src:notes.md", lt.src);
+        List<Object> steps = lt.e.trace(mark);
+        check(stepsOf(steps).equals(Arrays.asList("request", "steer", "sign", "commit", "deploy", "read", "propose",
+                "check", "sign", "commit", "answer")), "an extract is traced step by step, in order: " + stepsOf(steps));
+        check(nudges[0] == steps.size(), "the listener hears every step as it happens");
+        check(seqOf(lt.e.trace(seqOf(steps))) == 0, "reading from the last seq returns nothing new");
+        mark = seqOf(steps);
+        lt.e.pause();
+        rejects(() -> lt.e.extract("src:notes.md", lt.src), "paused", "a paused extract is refused");
+        List<Object> after = lt.e.trace(mark);
+        check(stepsOf(after).get(0).equals("request") && stepsOf(after).get(after.size() - 1).equals("refuse"),
+                "a refusal is traced with its reason: " + stepsOf(after));
+        String json = Json.canon(lt.e.trace(0));
+        check(json.length() > 0, "trace events are canonical JSON");
+        for (int i = 0; i < 300; i++) lt.e.verify();
+        check(lt.e.trace(0).size() == Policy.TRACE_KEEP, "the trace keeps only the newest " + Policy.TRACE_KEEP + " events");
+
         section("canonical JSON");
         Map<String, Object> m = Tx.m("b", 1L, "a", Arrays.asList("x", "é\n\"q\""), "c", null, "d", true);
         check(Json.canon(m).equals("{\"a\":[\"x\",\"é\\n\\\"q\\\"\"],\"b\":1,\"c\":null,\"d\":true}"), "keys sorted, escapes stable");
@@ -209,6 +232,16 @@ public final class CoreTest {
         System.out.println();
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
+    }
+
+    static long seqOf(List<Object> evs) {
+        return evs.isEmpty() ? 0 : ((Number) ((Map<?, ?>) evs.get(evs.size() - 1)).get("seq")).longValue();
+    }
+
+    static List<Object> stepsOf(List<Object> evs) {
+        List<Object> out = new ArrayList<>();
+        for (Object o : evs) out.add(((Map<?, ?>) o).get("step"));
+        return out;
     }
 
     static void section(String name) { System.out.println(); System.out.println(name); }

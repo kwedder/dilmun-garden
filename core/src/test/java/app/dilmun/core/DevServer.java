@@ -73,6 +73,7 @@ public final class DevServer {
                     case "log": r = engine.log(((Number) a.get(0)).intValue(), ((Number) a.get(1)).intValue()); break;
                     case "tx": r = Json.parse(engine.tx((String) a.get(0))); break;
                     case "verify": r = engine.verify(); break;
+                    case "trace": r = engine.trace(((Number) a.get(0)).longValue()); break;
                     case "rescan": r = engine.scan(samples); break;
                     case "useSamples": case "pickFolder": added[0] = true; r = engine.scan(samples); break;
                     case "extract": r = engine.extract((String) a.get(0), samples); break;

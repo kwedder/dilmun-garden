@@ -13,6 +13,7 @@ import java.util.Map;
 import java.util.TreeMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import app.dilmun.core.Agent;
 import app.dilmun.core.Engine;
@@ -31,6 +32,7 @@ final class Bridge {
     private final WebView web;
     private final SharedPreferences prefs;
     private final ExecutorService background = Executors.newSingleThreadExecutor();
+    private final AtomicBoolean traceNudged = new AtomicBoolean();
     private Engine engine;
     private TreeSources folder;
     private AssetSources samples;
@@ -49,6 +51,19 @@ final class Bridge {
             engine = Engine.open(new SqliteBackend(activity),
                     new KeystoreSigner("dilmun-portal"), new KeystoreSigner("dilmun-steward"),
                     Engine.SYSTEM_CLOCK, new Agent.PatternAgent());
+            // New trace events: tell the page once, and let it read everything since its last seq.
+            engine.onTrace(new Runnable() {
+                @Override public void run() {
+                    if (traceNudged.compareAndSet(false, true)) {
+                        web.post(new Runnable() {
+                            @Override public void run() {
+                                traceNudged.set(false);
+                                web.evaluateJavascript("window.dilmunEvent && window.dilmunEvent(\"trace\", null)", null);
+                            }
+                        });
+                    }
+                }
+            });
         }
         return engine;
     }
@@ -111,6 +126,7 @@ final class Bridge {
     @JavascriptInterface public String log(int offset, int limit) { return call(() -> engine().log(offset, limit)); }
     @JavascriptInterface public String tx(String id) { return call(() -> Json.parse(engine().tx(id))); }
     @JavascriptInterface public String verify() { return call(() -> engine().verify()); }
+    @JavascriptInterface public String trace(double since) { return call(() -> engine().trace((long) since)); }
 
     // ------------------------------------------------------------ actions
 

@@ -10,7 +10,7 @@
     color-scheme: dark;
     --bg:#080C11; --ink:#DCE4EC; --muted:#8393A3; --faint:#4B5A69;
     --surface:rgba(14,21,29,.86); --line:#223040;
-    --steel:#A9C2D6; --human:#6FA8DC; --agent:#D9A441; --dream:#9C8CE0;
+    --steel:#A9C2D6; --human:#6FA8DC; --agent:#D9A441; --dream:#9C8CE0; --good:#7FB89A; --bad:#D98A7E;
     --display:"Newsreader", Georgia, "Times New Roman", serif;
     --body:"Hanken Grotesk", "Segoe UI", system-ui, -apple-system, Helvetica, Arial, sans-serif;
     --mono:"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -83,14 +83,56 @@
   .bar{grid-column:1 / -1; height:2px; background:var(--line); border-radius:2px; overflow:hidden}
   .bar i{display:block; height:100%; width:0; background:var(--steel); transition:width .3s}
 
+  .tag .c{color:var(--faint); margin-left:6px}
+  .tag.hot{color:#fff; background:rgba(34,48,64,.9)}
+  .tag.hot.bad{color:#F2C2BA}
+
+  header .status{display:flex; align-items:center; gap:8px; font:500 11.5px/1.3 var(--mono); color:var(--muted); letter-spacing:.02em}
+  .dot{width:7px; height:7px; border-radius:50%; background:var(--faint); flex:none}
+  .dot.on{background:var(--good); box-shadow:0 0 0 0 rgba(127,184,154,.6); animation:beat 1.2s ease-out infinite}
+  .dot.tour{background:var(--steel)}
+  .dot.paused{background:var(--agent)}
+  @keyframes beat{ 0%{box-shadow:0 0 0 0 rgba(127,184,154,.6)} 100%{box-shadow:0 0 0 7px rgba(127,184,154,0)} }
+
+  #feed{position:absolute; left:16px; bottom:calc(64px + env(safe-area-inset-bottom,0px)); width:min(400px, calc(100% - 32px));
+    background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:10px 12px;
+    backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); display:flex; flex-direction:column; gap:8px}
+  #feed .head{display:flex; align-items:center; justify-content:space-between; gap:8px}
+  #feed .label{font:500 10.5px/1 var(--mono); letter-spacing:.08em; text-transform:uppercase; color:var(--muted); background:none; border:0; padding:4px 0; backdrop-filter:none}
+  #feed .acts{display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end}
+  #feed .acts button{padding:6px 9px; font-size:11.5px}
+  #feed ol{margin:0; padding:0; list-style:none; display:flex; flex-direction:column; gap:2px; max-height:132px; overflow:hidden}
+  #feed.open ol{max-height:40vh; overflow:auto}
+  #feed li{display:grid; grid-template-columns:56px 10px 1fr; gap:6px; align-items:baseline; font:400 11.5px/1.45 var(--mono); color:#B7C2CD;
+    cursor:pointer; border-radius:4px; padding:1px 2px; animation:in .35s ease-out}
+  #feed li:hover{background:rgba(34,48,64,.5)}
+  #feed li .tm{color:var(--faint)}
+  #feed li .sw{width:6px; height:6px; border-radius:50%; align-self:center}
+  #feed li.bad{color:#E6B1A8}
+  #feed li.good{color:#BFE0CD}
+  #feed li.old{opacity:.55}
+  #feed .empty{color:var(--faint); font:400 11.5px/1.5 var(--mono); cursor:default; display:block; animation:none}
+  @keyframes in{ from{opacity:0; transform:translateY(4px)} to{opacity:1; transform:none} }
+
+  #coach{position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:min(420px, calc(100% - 32px));
+    background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:18px;
+    backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px); display:flex; flex-direction:column; gap:10px}
+  #coach h2{margin:0; font:600 20px/1.2 var(--display)}
+  #coach p{margin:0; color:#C3CDD7; line-height:1.5; font-size:13.5px}
+  #coach .row{display:flex; gap:8px; justify-content:flex-end; margin-top:4px}
+  #coach .primary{border-color:var(--steel); color:#fff}
+
   @media (max-width:720px){
     header h1{font-size:22px}
     header .hint{display:none}
     #panel{top:auto; bottom:calc(64px + env(safe-area-inset-bottom,0px)); left:16px; right:16px; width:auto; max-height:48%}
     #walk{bottom:calc(64px + env(safe-area-inset-bottom,0px))}
     .controls{left:16px; right:16px}
+    #app.touring #panel{bottom:calc(176px + env(safe-area-inset-bottom,0px)); max-height:36%}
+    #feed ol{max-height:44px}
+    #feed.open ol{max-height:34vh}
   }
-  @media (prefers-reduced-motion: reduce){ .bar i{transition:none} }
+  @media (prefers-reduced-motion: reduce){ .bar i{transition:none} .dot.on{animation:none} #feed li{animation:none} }
 </style>
 </head>
 <body>
@@ -100,13 +142,29 @@
   <div id="tags"></div>
   <header>
     <h1>System map</h1>
-    <p>This portal, part by part</p>
+    <div class="status" role="status" aria-live="polite"><span id="liveDot" class="dot"></span><span id="liveText">Live · waiting for activity</span></div>
     <span class="hint">drag to orbit · scroll or pinch to zoom · tap any part</span>
   </header>
+  <section id="feed" aria-label="Live activity">
+    <div class="head">
+      <button id="feedToggle" class="label" aria-expanded="false">Live activity</button>
+      <div class="acts" id="acts"></div>
+    </div>
+    <ol id="feedList"></ol>
+  </section>
   <div class="controls">
-    <button id="btnWalk" aria-pressed="false">Follow a question</button>
+    <button id="btnWalk" aria-pressed="false">Tour</button>
     <button id="btnInv" aria-pressed="false">Invariants</button>
     <button id="btnReset">Reset view</button>
+  </div>
+  <div id="coach" hidden role="dialog" aria-labelledby="coachTitle">
+    <h2 id="coachTitle">This map is live</h2>
+    <p>Every request, check and signature in this portal travels along these lines the moment it happens. Tap any part to see what it holds right now.</p>
+    <p>New here? The tour walks one question through the whole system, step by step.</p>
+    <div class="row">
+      <button id="coachSkip">Just watch</button>
+      <button id="coachTour" class="primary">Take the tour</button>
+    </div>
   </div>
   <aside id="panel" hidden aria-live="polite"></aside>
   <div id="walk" hidden>
@@ -152,9 +210,12 @@ function liveLine(id){
   }
 }
 window.addEventListener("message", ev => {
+  if (ev.source !== window.parent) return;
   const d = ev.data || {};
-  if (d.type === "stats"){ LIVE = d.stats; if (typeof selected !== "undefined" && selected) renderInfo(selected); }
-  if (d.type === "visible"){ const was = running; running = !!d.visible; if (running && !was){ last = performance.now(); requestAnimationFrame(frame); } }
+  if (d.type === "stats"){ LIVE = d.stats; if (typeof selected !== "undefined" && selected) renderInfo(selected); if (typeof liveStats === "function") liveStats(); }
+  if (d.type === "hello"){ window.parent.postMessage({ type:"ready" }, "*"); return; }
+  if (d.type === "trace" && typeof takeTrace === "function") takeTrace(d.events || [], !!d.backlog);
+  if (d.type === "visible"){ const was = running; running = !!d.visible; if (running && !was){ last = performance.now(); if (typeof catchUp === "function") catchUp(); requestAnimationFrame(frame); } }
 });
 
 /* ------------------------------------------------------------ content */
@@ -422,7 +483,11 @@ const EDGES = [
   { id:"bg", a:"background", b:"dspace", p:[V(1.8,2.1,.3), V(2.15,3.52,.25)], bend:V(.9,0,0), role:"dream", label:"nightly" },
   { id:"rv", a:"dspace", b:"ui",      p:[V(2.5,3.73,.45), V(2.6,8.14,.5)], bend:V(2.7,0,.7), role:"dream", label:"review" },
   { id:"sy1",a:"store", b:"portals",  p:[V(3.4,3.45,-.2), V(5.6,3.3,-.35)], bend:V(0,.3,0), role:"core", label:"sync" },
-  { id:"sy2",a:"portals", b:"store",  p:[V(6.3,3.8,.35), V(3.4,3.45,.25)], bend:V(0,.3,0), role:"core", label:"sync" }
+  { id:"sy2",a:"portals", b:"store",  p:[V(6.3,3.8,.35), V(3.4,3.45,.25)], bend:V(0,.3,0), role:"core", label:"sync" },
+  { id:"ans",a:"arbiters", b:"ui",    p:[V(.7,6.92,.3), V(.7,8.14,.3)],   bend:V(0,0,0),    role:"core",  label:"answer" },
+  { id:"rp", a:"store", b:"arbiters", p:[V(-3.1,3.52,-.7), V(-2.9,6.69,-.7)], bend:V(-1.3,0,0), role:"core", label:"replay" },
+  { id:"lg", a:"arbiters", b:"ledger", p:[V(.6,6.69,1.2), V(.9,3.62,1.45)], bend:V(.4,0,1.3), role:"core", label:"decision" },
+  { id:"mr", a:"arbiters", b:"map",   p:[V(.45,6.69,-.95), V(.35,3.73,-1.1)], bend:V(.5,0,-.9), role:"steer", label:"record" }
 ];
 
 const dotTex = (() => {
@@ -465,10 +530,11 @@ Object.keys(E).forEach(id => {
   const b = document.createElement("button");
   b.className = "tag" + (E[id].small ? " small" : "");
   b.type = "button";
-  b.textContent = INFO[id].name;
+  b.appendChild(document.createTextNode(INFO[id].name));
+  const c = document.createElement("span"); c.className = "c"; b.appendChild(c);
   b.addEventListener("click", ev => { ev.stopPropagation(); select(id, true); });
   tagsEl.appendChild(b);
-  E[id].tag = b;
+  E[id].tag = b; E[id].count = c;
 });
 
 /* ------------------------------------------------------------ camera orbit */
@@ -601,6 +667,7 @@ function renderInfo(id){
   panel.appendChild(el("p", { text:d.desc }));
   if (d.facts.length){ panel.appendChild(el("ul", null, d.facts.map(f => el("li", { text:f })))); }
   const lv = liveLine(id); if (lv) panel.appendChild(el("div", { cls:"live", text:lv }));
+  const la = el("div", { cls:"live", id:"lastAct" }); panel.appendChild(la); lastActLine(id);
   const links = [...E[id].links].filter(x => x !== id);
   if (links.length){
     panel.appendChild(el("div", { cls:"sec", text:"Connected to" }));
@@ -617,7 +684,7 @@ function renderInfo(id){
       b.addEventListener("click", () => openInvariants(v[0])); return b;
     })));
   }
-  panel.hidden = false;
+  panel.hidden = false; layout();
 }
 function openInvariants(n){
   selected = null; invSel = n || null;
@@ -641,11 +708,12 @@ function openInvariants(n){
   });
   panel.appendChild(list);
   panel.appendChild(el("div", { cls:"foot", text:"51 tests over thousands of random histories; 27 deliberate breaks, all caught." }));
-  panel.hidden = false;
+  panel.hidden = false; layout();
 }
 function closePanel(){
   panel.hidden = true; selected = null; invSel = null;
   btnInv.setAttribute("aria-pressed","false");
+  if (typeof layout === "function") layout();
 }
 btnInv.addEventListener("click", () => { if (btnInv.getAttribute("aria-pressed") === "true") closePanel(); else openInvariants(null); });
 document.getElementById("btnReset").addEventListener("click", () => {
@@ -653,7 +721,7 @@ document.getElementById("btnReset").addEventListener("click", () => {
   cam.theta = HOME.theta; cam.phi = HOME.phi;
 });
 document.addEventListener("keydown", ev => {
-  if (ev.key === "Escape"){ if (walk.on) stopWalk(); else closePanel(); }
+  if (ev.key === "Escape"){ if (!coach.hidden) coachDone(); else if (walk.on) stopWalk(); else closePanel(); }
   if (walk.on && ev.key === "ArrowRight") goStep(walk.i + 1);
   if (walk.on && ev.key === "ArrowLeft") goStep(walk.i - 1);
 });
@@ -674,10 +742,14 @@ function goStep(i){
 }
 function startWalk(){
   walk.on = true; walkEl.hidden = false; btnWalk.setAttribute("aria-pressed","true");
+  document.getElementById("app").classList.add("touring");
+  coachDone(); layout(); statusLine();
   setPlay(!reduced); goStep(0);
 }
 function stopWalk(){
   walk.on = false; walkEl.hidden = true; btnWalk.setAttribute("aria-pressed","false");
+  document.getElementById("app").classList.remove("touring");
+  closePanel(); catchUp(); layout(); statusLine();
 }
 function setPlay(p){ walk.playing = p; wPlay.textContent = p ? "❚❚" : "▶"; wPlay.setAttribute("aria-label", p ? "Pause" : "Play"); walk.t = performance.now(); }
 btnWalk.addEventListener("click", () => walk.on ? stopWalk() : startWalk());
@@ -685,6 +757,219 @@ document.getElementById("wPrev").addEventListener("click", () => { setPlay(false
 document.getElementById("wNext").addEventListener("click", () => { setPlay(false); goStep(walk.i + 1); });
 wPlay.addEventListener("click", () => setPlay(!walk.playing));
 document.getElementById("wClose").addEventListener("click", stopWalk);
+
+/* ------------------------------------------------------------ live activity
+   The engine traces every step it takes. Each step becomes a packet on the
+   edge it really travels, a glow on the part that receives it, and a line in
+   the activity feed. Steps arrive in bursts (an extract takes milliseconds),
+   so they are played in order at a readable pace, faster when many wait. */
+const TONE = { good:0x7FB89A, bad:0xD98A7E };
+const TONE_CSS = { good:"#7FB89A", bad:"#D98A7E" };
+const STALE_MS = 60000;
+
+function hops(ev){
+  switch (ev.step){
+    case "replay":  return { hops:[["rp"]], node:"arbiters" };
+    case "request": return ev.steward ? { hops:[["q"],["h"]], node:"arbiters", role:"human" } : { hops:[["h"]], node:"arbiters" };
+    case "answer":  return ev.steward ? { hops:[["ans"],["a"]], node:"human", tone:"good" } : { hops:[["ans"]], node:"ui", tone:"good" };
+    case "refuse":  return { hops:[], node:"arbiters", tone:"bad" };
+    case "scan":    return { hops:[["sc"]], node:"map" };
+    case "steer":   return { hops:[["s1","s2"]], node:"arbiters" };
+    case "sign":    return { hops:[["k"]], node:"keystore" };
+    case "commit":  return { hops:[[ ev.kind === "assert" ? "c" : ev.kind === "promote" ? "g" : ev.kind === "map" ? "mr" : "lg" ]],
+                             node: ev.kind === "assert" ? "episodes" : ev.kind === "promote" ? "culture" : ev.kind === "map" ? "map" : "ledger" };
+    case "deploy":  return { hops:[["d"]], node:"agent" };
+    case "read":    return { hops:[["r"]], node:"source" };
+    case "propose": return { hops:[["p"]], node:"arbiters" };
+    case "check":   return { hops:[], node:"arbiters", tone: ev.rejected > 0 ? (ev.accepted > 0 ? null : "bad") : "good" };
+    case "promote": return { hops:[], node:"episodes", tone:"good" };
+    case "hold":    return { hops:[], node:"ledger" };
+    case "verify":  return { hops:[["rp"]], node:"store", tone: ev.ok ? "good" : "bad" };
+    default:        return { hops:[], node:"arbiters" };
+  }
+}
+
+const queue = [];            // steps waiting to play
+const packets = [];          // { edge, t0, dur, color }
+const sprites = [];
+for (let i = 0; i < 72; i++){
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map:dotTex, transparent:true, depthWrite:false, blending:THREE.AdditiveBlending, opacity:0 }));
+  s.visible = false; scene.add(s); sprites.push(s);
+}
+Object.keys(E).forEach(id => {
+  const g = new THREE.Sprite(new THREE.SpriteMaterial({ map:dotTex, color:ROLE[INFO[id].role], transparent:true, depthWrite:false, blending:THREE.AdditiveBlending, opacity:0 }));
+  const big = ["ui","arbiters","store","background","device"].includes(id);
+  g.scale.setScalar(big ? 2.4 : 1.5); g.position.copy(E[id].pos); g.visible = false;
+  scene.add(g); E[id].glow = g; E[id].heat = 0;
+});
+
+let nextAt = 0, lastLive = 0, statusAt = 0, recent = [];
+const feedEl = document.getElementById("feed"), feedList = document.getElementById("feedList");
+const liveDot = document.getElementById("liveDot"), liveText = document.getElementById("liveText");
+
+function takeTrace(evs, backlog){
+  const now = Date.now();
+  let seen = feedList.dataset.seq ? Number(feedList.dataset.seq) : 0;
+  evs.forEach(ev => {
+    if (ev.seq <= seen) return;                       // the backlog can repeat what we already have
+    seen = ev.seq;
+    if (backlog && now - ev.t > STALE_MS) addFeed(ev, true);
+    else queue.push(ev);
+  });
+  feedList.dataset.seq = String(seen);
+  if (queue.length > 240) queue.splice(0, queue.length - 240).forEach(ev => addFeed(ev, true));
+}
+/* Back on screen: anything older than a minute goes straight to the feed. */
+function catchUp(){
+  const now = Date.now();
+  while (queue.length && now - queue[0].t > STALE_MS) addFeed(queue.shift(), true);
+}
+
+function playLive(now){
+  if (walk.on || !queue.length || now < nextAt) { tickPackets(now); return; }
+  const speed = queue.length > 16 ? 3.2 : queue.length > 6 ? 1.8 : 1;
+  const ev = queue.shift();
+  const r = hops(ev);
+  const hopMs = 720 / speed;
+  let t0 = now;
+  r.hops.forEach(group => {
+    group.forEach(eid => {
+      const e = EDGE[eid];
+      const color = r.role ? ROLE[r.role] : ev.step === "refuse" ? TONE.bad : ROLE[e.role];
+      packets.push({ e, t0, dur:hopMs, color });
+      setTimeout(() => { e.heat = 1; heatNode(e.b, null); }, Math.max(0, t0 - now + hopMs * .85));
+      e.heat = Math.max(e.heat || 0, .6);
+    });
+    t0 += hopMs * .8;
+  });
+  const arrive = Math.max(0, t0 - now - hopMs * .8 + hopMs * .85);
+  setTimeout(() => { heatNode(r.node, r.tone, ev); }, r.hops.length ? arrive : 0);
+  addFeed(ev, false, r);
+  lastLive = now; recent.push(now);
+  nextAt = now + Math.max(160, (r.hops.length ? 520 : 300) / speed);
+  tickPackets(now);
+}
+
+function heatNode(id, tone, ev){
+  const e = E[id]; if (!e) return;
+  e.heat = 1; e.tone = tone || null;
+  e.glow.material.color.setHex(tone ? TONE[tone] : ROLE[INFO[id].role]);
+  if (ev){ e.last = { text:ev.text, t:ev.t }; if (selected === id) lastActLine(id); }
+}
+
+function tickPackets(now){
+  let k = 0;
+  for (let i = packets.length - 1; i >= 0; i--){
+    const p = packets[i], u = (now - p.t0) / p.dur;
+    if (u >= 1.15) { packets.splice(i, 1); continue; }
+    if (u < 0) continue;
+    for (let j = 0; j < 3 && k < sprites.length; j++){
+      const uu = u - j * .05;
+      if (uu < 0 || uu > 1) continue;
+      const s = sprites[k++];
+      p.e.curve.getPointAt(uu, s.position);
+      s.material.color.setHex(p.color);
+      s.material.opacity = (j === 0 ? 1 : j === 1 ? .5 : .25) * (u > 1 ? Math.max(0, 1 - (u - 1) / .15) : 1);
+      const sc = j === 0 ? .42 : .3; s.scale.set(sc, sc, sc);
+      s.visible = true;
+    }
+  }
+  for (; k < sprites.length; k++) sprites[k].visible = false;
+}
+
+function hhmmss(t){ const d = new Date(t); return [d.getHours(), d.getMinutes(), d.getSeconds()].map(x => String(x).padStart(2,"0")).join(":"); }
+function addFeed(ev, old, r){
+  r = r || hops(ev);
+  const empty = feedList.querySelector(".empty"); if (empty) empty.remove();
+  const li = document.createElement("li");
+  if (r.tone) li.classList.add(r.tone);
+  if (old) li.classList.add("old");
+  const tm = document.createElement("span"); tm.className = "tm"; tm.textContent = hhmmss(ev.t);
+  const sw = document.createElement("span"); sw.className = "sw";
+  sw.style.background = r.tone ? TONE_CSS[r.tone] : CSS[INFO[r.node].role];
+  const tx = document.createElement("span"); tx.textContent = ev.text;
+  li.append(tm, sw, tx);
+  li.title = ev.text;
+  li.addEventListener("click", () => select(r.node, true));
+  feedList.prepend(li);
+  while (feedList.children.length > 120) feedList.lastChild.remove();
+  if (old && !E[r.node].last) E[r.node].last = { text:ev.text, t:ev.t };
+}
+function feedEmpty(){
+  if (feedList.children.length) return;
+  const li = document.createElement("li"); li.className = "empty";
+  li.textContent = LIVE && !LIVE.sources ? "Nothing yet. Add the sample texts, then extract, to watch the portal work."
+    : "Nothing yet. Extract a source or run the gate, here or on any tab, to watch it flow.";
+  feedList.appendChild(li);
+}
+
+function ago(t){
+  const s = Math.max(0, Math.round((Date.now() - t) / 1000));
+  return s < 60 ? s + "s ago" : s < 3600 ? Math.round(s / 60) + " min ago" : Math.round(s / 3600) + " h ago";
+}
+function lastActLine(id){
+  const n = document.getElementById("lastAct"); if (!n) return;
+  const l = E[id] && E[id].last;
+  n.hidden = !l;
+  if (l) n.textContent = "Last activity, " + ago(l.t) + ": " + l.text;
+}
+
+function statusLine(){
+  statusAt = performance.now();
+  recent = recent.filter(x => statusAt - x < 60000);
+  liveDot.className = "dot";
+  if (walk.on){ liveDot.classList.add("tour"); liveText.textContent = "Tour · live activity waits" + (queue.length ? " (" + queue.length + " steps)" : ""); return; }
+  if (LIVE && LIVE.frozen){ liveDot.classList.add("paused"); liveText.textContent = "Live · frozen after a fork"; return; }
+  if (LIVE && LIVE.paused){ liveDot.classList.add("paused"); liveText.textContent = "Live · arbiters paused by the steward"; }
+  else if (queue.length > 6){ liveDot.classList.add("on"); liveText.textContent = "Live · catching up, " + queue.length + " steps"; }
+  else if (statusAt - lastLive < 2500 && lastLive){ liveDot.classList.add("on"); liveText.textContent = "Live · working"; }
+  else liveText.textContent = recent.length ? "Live · " + recent.length + (recent.length === 1 ? " step" : " steps") + " in the last minute" : "Live · waiting for activity";
+  if (selected) lastActLine(selected);
+}
+
+/* Counts on the labels, from the app's summary. */
+function liveStats(){
+  const s = LIVE; if (!s) return;
+  const c = { store:s.txs, culture:s.culture, episodes:s.results, map:s.sources, ledger:s.held ? s.held + " held" : null, arbiters:s.open ? s.open + " open" : null };
+  for (const id in E) E[id].count.textContent = c[id] == null || c[id] === 0 && id !== "store" ? "" : String(c[id]);
+  acts(); feedEmpty(); statusLine();
+}
+
+/* Do something from here, so you can watch it without leaving the map. */
+const actsEl = document.getElementById("acts");
+function acts(){
+  const want = !LIVE ? [] : !LIVE.sources ? [["samples","Add samples"]] : [["extract","Extract"],["gate","Gate"],["verify","Verify"]];
+  const key = want.map(x => x[0]).join();
+  if (actsEl.dataset.key === key) return;
+  actsEl.dataset.key = key; actsEl.innerHTML = "";
+  want.forEach(([name, label]) => {
+    const b = document.createElement("button"); b.type = "button"; b.textContent = label;
+    b.addEventListener("click", () => window.parent.postMessage({ type:"act", name }, "*"));
+    actsEl.appendChild(b);
+  });
+}
+const feedToggle = document.getElementById("feedToggle");
+feedToggle.addEventListener("click", () => {
+  const open = !feedEl.classList.contains("open");
+  feedEl.classList.toggle("open", open); feedToggle.setAttribute("aria-expanded", String(open));
+});
+
+/* The feed shares the bottom of a phone screen with the panel and the tour. */
+function layout(){
+  const narrow = stage.clientWidth < 720;
+  feedEl.hidden = walk.on || (narrow && !panel.hidden);
+}
+
+/* First visit: offer the tour, the way a game offers its tutorial. Never forced. */
+const coach = document.getElementById("coach");
+const TOUR_KEY = "dilmun.map.tourOffered";
+function coachDone(){
+  coach.hidden = true;
+  try { localStorage.setItem(TOUR_KEY, "1"); } catch (e) {}
+}
+document.getElementById("coachSkip").addEventListener("click", coachDone);
+document.getElementById("coachTour").addEventListener("click", () => { coachDone(); startWalk(); });
+try { coach.hidden = localStorage.getItem(TOUR_KEY) === "1"; } catch (e) { coach.hidden = false; }
 
 /* ------------------------------------------------------------ frame */
 const tmp = new THREE.Vector3();
@@ -709,29 +994,38 @@ function frame(now){
   const dt = Math.min(.05, (now - last) / 1000); last = now;
   if (idle && !walk.on) cam.theta += dt * .05;
   if (!idle && !selected && !walk.on && !invSel && now - lastInteract > 12000 && !reduced) idle = true;
+  if (now - statusAt > 1000) statusLine();
   if (walk.on && walk.playing && now - walk.t > STEP_MS) goStep(walk.i + 1);
   placeCamera();
 
   const emph = emphasisSet(), act = activeEdges();
   for (const id in E){
     const e = E[id];
+    e.heat = Math.max(0, (e.heat || 0) - dt * .55);
     const on = !emph || emph.has(id);
-    const f = (on ? 1 : .22) * (hover === id ? 1.25 : 1);
+    const f = (on ? 1 : .22) * (hover === id ? 1.25 : 1) * (1 + e.heat * .8);
     e.mats.forEach(x => x.m.opacity = Math.min(1, x.base * f));
     e.fills.forEach(x => x.m.opacity = x.base * (on ? 1 : .5));
-    e.tag.classList.toggle("dim", !on);
+    e.tag.classList.toggle("dim", !on && e.heat < .3);
     e.tag.classList.toggle("on", hover === id || selected === id);
+    e.tag.classList.toggle("hot", e.heat > .35);
+    e.tag.classList.toggle("bad", e.tone === "bad");
+    if (e.glow){ e.glow.material.opacity = Math.min(.6, e.heat * .6); e.glow.visible = e.heat > .01; }
   }
   halo.rotation.z += dt * .4;
 
   const t = now / 1000;
+  playLive(now);
   EDGES.forEach(e => {
     let level;
     if (act) level = act.has(e.id) ? 1 : 0;
     else if (emph) level = (emph.has(e.a) && emph.has(e.b)) ? .8 : 0;
-    else level = e.id === "w" ? 0 : .45;
-    e.mat.opacity = act ? (level ? .75 : .06) : (emph ? (level ? .5 : .06) : .16);
-    const n = level >= 1 ? 4 : (level > 0 ? 2 : 0);
+    else level = 0;
+    e.heat = Math.max(0, (e.heat || 0) - dt * .7);
+    const baseOp = act ? (level ? .75 : .06) : (emph ? (level ? .4 : .06) : .14);
+    e.mat.opacity = act ? baseOp : Math.min(.95, baseOp + e.heat * .7);
+    // Guided particles belong to the tour. Outside it, only live packets move.
+    const n = act ? (level >= 1 ? 4 : 0) : 0;
     const speed = (reduced ? .12 : .32) * (3.2 / Math.max(1.5, e.len)) ;
     e.parts.forEach((s, i) => {
       if (i >= n){ s.material.opacity = 0; return; }
@@ -757,7 +1051,10 @@ function frame(now){
 }
 resize();
 placeCamera();
+layout(); feedEmpty(); statusLine();
+window.addEventListener("resize", layout);
 requestAnimationFrame(frame);
+if (window.parent !== window) window.parent.postMessage({ type:"ready" }, "*");
 })();
 </script>
 

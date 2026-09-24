@@ -7,9 +7,29 @@
   function call(name) {
     const args = Array.prototype.slice.call(arguments, 1);
     if (!B || typeof B[name] !== "function") return { error: "The app's engine isn't connected to this page." };
+    if (name !== "trace") soonTrace();
     try { return JSON.parse(B[name].apply(B, args)); }
     catch (e) { return { error: String(e && e.message || e) }; }
   }
+
+  /* ------------------------------------------------------------ live trace
+     The engine records each step it takes (request, steer, sign, commit, read,
+     check, promote...). We read everything since the last seq and hand it to
+     the map, which plays it back as it happens. */
+  let traceSeq = 0, traceSoon = 0, mapReady = false;
+  const traceBacklog = [];
+  function soonTrace() { if (!traceSoon) traceSoon = setTimeout(() => { traceSoon = 0; drainTrace(); }, 0); }
+  function drainTrace() {
+    const r = call("trace", traceSeq);
+    const evs = r && r.ok;
+    if (!evs || !evs.length) return;
+    traceSeq = evs[evs.length - 1].seq;
+    evs.forEach(e => traceBacklog.push(e));
+    if (traceBacklog.length > 200) traceBacklog.splice(0, traceBacklog.length - 200);
+    if (mapReady) postToMap({ type: "trace", events: evs });
+  }
+  // Background work (a folder scan) nudges us through dilmunEvent; this catches anything else.
+  setInterval(drainTrace, 1500);
   function ok(r, quiet) {
     if (r && r.error !== undefined) { if (!quiet) toast(r.error, true); return undefined; }
     return r ? r.ok : undefined;
@@ -274,6 +294,7 @@
     return false;
   };
   window.dilmunEvent = function (name, r) {
+    if (name === "trace") { drainTrace(); return; }
     if (name === "scanned") {
       if (r && r.error !== undefined) toast(r.error, true);
       else if (r) toast("Folder mapped · " + plural(r.ok.total, "source", "sources") + (r.ok.changed ? " · " + r.ok.changed + " new or changed" : ""));
@@ -286,4 +307,43 @@
   call("reconcile");
   refreshSummary();
   $("map").addEventListener("load", () => { if (summary) postToMap({ type: "stats", stats: summary }); postToMap({ type: "visible", visible: current === "map" }); });
+  // The map may have loaded before this script ran; ask it to say ready again.
+  postToMap({ type: "hello" });
+
+  /* ------------------------------------------------------------ the map asks */
+  let nextSource = 0;
+  window.addEventListener("message", ev => {
+    if (ev.source !== ($("map") && $("map").contentWindow)) return;
+    const d = ev.data || {};
+    if (d.type === "ready") {
+      if (mapReady) return;
+      mapReady = true;
+      if (summary) postToMap({ type: "stats", stats: summary });
+      postToMap({ type: "visible", visible: current === "map" });
+      postToMap({ type: "trace", events: traceBacklog.slice(), backlog: true });
+      return;
+    }
+    if (d.type !== "act") return;
+    if (d.name === "samples") {
+      const r = ok(call("useSamples"));
+      if (r !== undefined) toast("Mapped " + plural(r.total, "source", "sources"));
+    } else if (d.name === "extract") {
+      // the next source that has no result yet, else take turns
+      const src = ok(call("sources")) || [];
+      if (!src.length) { toast("Nothing mapped yet. Add the sample texts or choose a folder on the Sources tab.", true); return; }
+      const done = {};
+      (ok(call("results", 200), true) || []).forEach(x => { done[x.source] = true; });
+      let pick = src.find(x => !done[x.id]);
+      if (!pick) pick = src[nextSource++ % src.length];
+      const r = ok(call("extract", pick.id));
+      if (r !== undefined) toast(plural(r.accepted, "fact", "facts") + " committed from " + pick.name + ((r.rejected || []).length ? " · " + r.rejected.length + " refused" : ""));
+    } else if (d.name === "gate") {
+      const n = ok(call("gate"));
+      if (n !== undefined) toast(n ? plural(n, "fact", "facts") + " promoted to culture" : "Nothing new has enough support");
+    } else if (d.name === "verify") {
+      const v = ok(call("verify"));
+      if (v !== undefined) toast(v.ok ? "Log verified · " + plural(v.count, "transaction", "transactions") : "Verification failed: " + v.error, !v.ok);
+    }
+    refresh();
+  });
 })();

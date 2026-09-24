@@ -1,6 +1,5 @@
 package app.dilmun.core;
 
-import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -48,9 +47,6 @@ public final class Engine {
     private Store store = new Store();
     private State cached;
     private long lastWall = 0, lastCounter = 0;
-    private final ArrayDeque<Map<String, Object>> trace = new ArrayDeque<>();
-    private long traceSeq = 0;
-    private Runnable traceListener;
 
     private Engine(LogBackend backend, Crypto.Signer portalKey, Crypto.Signer stewardKey, Clock clock, Agent agent) {
         this.backend = backend;
@@ -68,8 +64,6 @@ public final class Engine {
         Engine e = new Engine(backend, portalKey, stewardKey, clock, agent);
         e.store = load(backend);
         for (Map<String, Object> t : e.store.all()) e.seen(t);
-        e.note("replay", "Rebuilt state from " + plural(e.store.size(), "transaction", "transactions") + " on disk",
-                Tx.m("txs", (long) e.store.size()));
         if (e.store.genesisId() == null) {
             e.commit(stewardKey, Tx.STEWARD, "genesis", "system", Tx.m(
                     "steward", stewardKey.pub(),
@@ -108,9 +102,6 @@ public final class Engine {
     private Map<String, Object> commit(Crypto.Signer key, String chain, String kind, String tier,
                                        Map<String, Object> payload, Map<String, Object> meta) {
         Map<String, Object> tx = Tx.make(key, chain, store.tip(chain), nextHlc(), kind, tier, payload, meta);
-        boolean steward = Tx.STEWARD.equals(chain);
-        note("sign", "Signed " + kind + " with the " + (steward ? "steward's" : "portal's") + " key",
-                Tx.m("by", steward ? "steward" : "portal", "kind", kind));
         try {
             store.append(tx);
         } finally {
@@ -119,54 +110,8 @@ public final class Engine {
         backend.putTx(tx);
         seen(tx);
         cached = null;
-        note("commit", "Committed #" + store.size() + " " + kind + " to " + tier,
-                Tx.m("kind", kind, "tier", tier, "n", (long) store.size(), "id", Tx.id(tx).substring(0, 10)));
         return tx;
     }
-
-    // ------------------------------------------------------------ trace
-
-    /**
-     * What the engine just did, step by step, for the live map. Kept in memory
-     * only (the log is the record; this is a view of work as it happens), and
-     * capped, so a screen that never reads it costs nothing but a little memory.
-     */
-    public synchronized List<Object> trace(long since) {
-        List<Object> out = new ArrayList<>();
-        for (Map<String, Object> ev : trace) if (((Number) ev.get("seq")).longValue() > since) out.add(ev);
-        return out;
-    }
-
-    /** Called (on the engine's thread) after each new trace event. */
-    public synchronized void onTrace(Runnable listener) { traceListener = listener; }
-
-    private void note(String step, String text, Map<String, Object> data) {
-        Map<String, Object> ev = new TreeMap<>(data);
-        ev.put("seq", ++traceSeq);
-        ev.put("t", clock.now());
-        ev.put("step", step);
-        ev.put("text", text);
-        trace.addLast(ev);
-        while (trace.size() > Policy.TRACE_KEEP) trace.removeFirst();
-        if (traceListener != null) traceListener.run();
-    }
-
-    private interface Body<T> { T run(); }
-
-    /** A request from the screens: traced from the hand-off to the answer, refusals included. */
-    private <T> T request(String what, boolean steward, Body<T> body) {
-        note("request", (steward ? "Steward: " : "Request: ") + what, Tx.m("what", what, "steward", steward));
-        try {
-            T r = body.run();
-            note("answer", "Answered: " + what, Tx.m("what", what, "steward", steward));
-            return r;
-        } catch (Store.Rejected e) {
-            note("refuse", "Refused: " + e.getMessage(), Tx.m("what", what, "reason", e.getMessage()));
-            throw e;
-        }
-    }
-
-    private static String plural(long n, String one, String many) { return n + " " + (n == 1 ? one : many); }
 
     public synchronized State state() {
         if (cached == null) cached = State.replay(store.valid());
@@ -185,10 +130,6 @@ public final class Engine {
 
     /** Record what each source holds now. Commits only when something changed. */
     public synchronized Map<String, Object> scan(Sources src) {
-        return request("scan sources", false, () -> doScan(src));
-    }
-
-    private Map<String, Object> doScan(Sources src) {
         live();
         State st = state();
         List<Map<String, Object>> docs = src.list();
@@ -200,8 +141,6 @@ public final class Engine {
                 names.put(id, d.get("name"));
             }
         }
-        note("scan", "Scanned " + plural(docs.size(), "source", "sources") + " · " + places.size() + " new or changed",
-                Tx.m("total", (long) docs.size(), "changed", (long) places.size()));
         if (!places.isEmpty()) commit(portalKey, portal, "map", "system", Tx.m("places", places, "names", names), null);
         return Tx.m("changed", (long) places.size(), "total", (long) docs.size());
     }
@@ -219,8 +158,6 @@ public final class Engine {
         if (digest == null) throw new Store.Rejected("source is not in the workspace map");
         TreeMap<Long, List<String>> vs = st.skills.get("ingest");
         if (vs == null) throw new Store.Rejected("skill is not in the registry");
-        note("steer", "Steered: skill ingest v" + vs.lastKey() + " · source " + nameOf(st, sourceId),
-                Tx.m("skill", "ingest", "version", vs.lastKey(), "source", nameOf(st, sourceId)));
         long now = nextHlc()[0];
         String did = "dir:" + Crypto.H(Arrays.asList(portal, now, sourceId, (long) store.size())).substring(0, 16);
         commit(portalKey, portal, "directive", "system", Tx.m(
@@ -230,77 +167,104 @@ public final class Engine {
         return did;
     }
 
-    /** Deploy the agent on one directive, check what it proposes, and commit one result. */
+    /**
+     * Deploy an agent on one directive, check what it proposes, and commit one result.
+     *
+     * Three steps, so a slow model never holds the engine: the checks and the
+     * source read happen under the engine's lock, the agent runs without it,
+     * and the commit takes the lock again and re-checks everything that could
+     * have changed meanwhile (pause, fork, the directive, the skill).
+     */
+    public Map<String, Object> run(String did, Sources src, Agent with) {
+        Object[] prep = prepareRun(did, src);
+        Map<String, Object> proposal = with.propose(new TreeMap<>(castMap(prep[0])), (String) prep[1]);   // the only agent call
+        return finishRun(did, (String) prep[1], proposal, with);
+    }
+
+    public Map<String, Object> run(String did, Sources src) { return run(did, src, agent); }
+
     @SuppressWarnings("unchecked")
-    public synchronized Map<String, Object> run(String did, Sources src) {
+    private static Map<String, Object> castMap(Object o) { return (Map<String, Object>) o; }
+
+    private synchronized Object[] prepareRun(String did, Sources src) {
         live();
         State st = state();
         notPaused(st);
         Map<String, Object> d = st.openDirectives.get(did);
         if (d == null || !portal.equals(d.get("portal"))) throw new Store.Rejected("no such open directive on this portal");
         if (nextHlc()[0] >= ((Number) d.get("expires")).longValue()) throw new Store.Rejected("directive expired");
-        String source = (String) d.get("source");
-        note("deploy", "Deployed the agent on " + did.substring(4, 12) + " · budget " + d.get("budget"),
-                Tx.m("directive", did, "budget", d.get("budget")));
-        String text = src.read(source);
+        String text = src.read((String) d.get("source"));
         if (text == null) throw new Store.Rejected("source is not available on this device");
         if (!Crypto.textHash(text).equals(d.get("source_hash"))) throw new Store.Rejected("source changed since the directive; rescan");
+        return new Object[]{d, text};
+    }
 
-        note("read", "Agent read " + nameOf(st, source) + " · " + plural(text.length(), "character", "characters"),
-                Tx.m("source", nameOf(st, source), "chars", (long) text.length()));
-        Map<String, Object> proposal = agent.propose(d, text);                  // the only agent call
-        note("propose", "Agent proposed " + plural(((List<?>) proposal.get("facts")).size(), "fact", "facts"),
-                Tx.m("facts", (long) ((List<?>) proposal.get("facts")).size()));
+    @SuppressWarnings("unchecked")
+    private synchronized Map<String, Object> finishRun(String did, String text, Map<String, Object> proposal, Agent with) {
+        live();
+        State st = state();
+        notPaused(st);
+        Map<String, Object> d = st.openDirectives.get(did);
+        if (d == null || !portal.equals(d.get("portal"))) throw new Store.Rejected("the directive closed while the agent was working");
+        String source = (String) d.get("source");
         String skill = (String) d.get("skill");
         long version = ((Number) d.get("skill_version")).longValue();
         List<String> allowed = st.allowedTools(skill, version);
-        List<Object> tools = (List<Object>) proposal.get("tools");
+        Object toolsObj = proposal.get("tools"), factsObj = proposal.get("facts");
+        List<Object> tools = toolsObj instanceof List ? (List<Object>) toolsObj : Collections.emptyList();
+        List<Object> facts = factsObj instanceof List ? (List<Object>) factsObj : Collections.emptyList();
         long budget = ((Number) d.get("budget")).longValue();
         String nonce = Crypto.H(Arrays.asList(portal, did));
 
         List<Object> datoms = new ArrayList<>(), rejected = new ArrayList<>();
-        List<Object> facts = (List<Object>) proposal.get("facts");
         String badTool = null;
-        for (Object t : tools) if (!allowed.contains(t)) { badTool = (String) t; break; }
+        for (Object t : tools) if (!allowed.contains(t)) { badTool = String.valueOf(t); break; }
         long accepted = 0;
         for (int i = 0; i < facts.size(); i++) {
-            Map<String, Object> f = (Map<String, Object>) facts.get(i);
+            Map<String, Object> f = facts.get(i) instanceof Map ? (Map<String, Object>) facts.get(i) : Collections.<String, Object>emptyMap();
             String reason = null;
-            Map<String, Object> q = (Map<String, Object>) f.get("quote");
-            int qs = ((Number) q.get("start")).intValue(), qe = ((Number) q.get("end")).intValue();
-            String a = (String) f.get("a");
+            Object qo = f.get("quote"), ao = f.get("a"), vo = f.get("v"), io = f.get("ident"), no = f.get("nu");
+            Map<String, Object> q = qo instanceof Map ? (Map<String, Object>) qo : Collections.<String, Object>emptyMap();
+            String a = ao instanceof String ? (String) ao : String.valueOf(ao);
+            List<Object> ident = io instanceof List ? (List<Object>) io : Collections.emptyList();
             if (badTool != null) reason = "tool not allowed by the skill: " + badTool;
-            else if (qs < 0 || qe > text.length() || qs > qe || !text.substring(qs, qe).equals(q.get("text")))
+            else if (!(q.get("start") instanceof Number) || !(q.get("end") instanceof Number) || !(q.get("text") instanceof String)
+                    || !quoteMatches(text, ((Number) q.get("start")).intValue(), ((Number) q.get("end")).intValue(), (String) q.get("text")))
                 reason = "quote does not match the source";
             else if (!st.schema.containsKey(a) || "name".equals(a)) reason = "attribute not in the schema: " + a;
+            else if (ident.size() != 2 || !"name".equals(ident.get(0)) || !(ident.get(1) instanceof String)
+                    || ((String) ident.get(1)).trim().isEmpty() || !(vo instanceof String) || ((String) vo).trim().isEmpty())
+                reason = "the fact is incomplete";
             else if (accepted >= budget) reason = "over budget";
             if (reason != null) {
                 rejected.add(Tx.m("i", (long) i, "a", a, "reason", reason));
                 continue;
             }
-            List<Object> ident = (List<Object>) f.get("ident");
-            String e = State.identId((String) ident.get(0), ident.get(1));
-            Object v = f.get("v");
-            if (Boolean.TRUE.equals(st.schema.get(a).get("ref"))) v = Tx.m("ref", State.identId("name", v));
+            String name = ((String) ident.get(1)).trim(), val = ((String) vo).trim();
+            long nu = no instanceof Number ? Math.max(0, Math.min(1000, ((Number) no).longValue())) : 500L;
+            String e = State.identId("name", name);
+            Object v = val;
+            boolean ref = Boolean.TRUE.equals(st.schema.get(a).get("ref"));
+            if (ref) v = Tx.m("ref", State.identId("name", val));
             long vf = nextHlc()[0];
-            datoms.add(datom("d:" + Crypto.H(Arrays.asList(nonce, (long) i)).substring(0, 24), e, a, v,
-                    ((Number) f.get("nu")).longValue(), vf, q));
-            datoms.add(datom("d:" + Crypto.H(Arrays.asList(nonce, (long) i, "name")).substring(0, 24), e, "name",
-                    ident.get(1), 1000L, vf, q));
-            if (Boolean.TRUE.equals(st.schema.get(a).get("ref"))) {        // the value is an entity too
+            datoms.add(datom("d:" + Crypto.H(Arrays.asList(nonce, (long) i)).substring(0, 24), e, a, v, nu, vf, q));
+            datoms.add(datom("d:" + Crypto.H(Arrays.asList(nonce, (long) i, "name")).substring(0, 24), e, "name", name, 1000L, vf, q));
+            if (ref) {                                                   // the value is an entity too
                 datoms.add(datom("d:" + Crypto.H(Arrays.asList(nonce, (long) i, "vname")).substring(0, 24),
-                        State.identId("name", f.get("v")), "name", f.get("v"), 1000L, vf, q));
+                        State.identId("name", val), "name", val, 1000L, vf, q));
             }
             accepted++;
         }
-        note("check", "Checked quotes, schema, tools, budget: " + accepted + " kept · " + rejected.size() + " refused",
-                Tx.m("accepted", accepted, "rejected", (long) rejected.size()));
         Map<String, Object> tx = commit(portalKey, portal, "assert", "episode:" + did,
                 Tx.m("proposal", proposal, "datoms", datoms, "rejected", rejected),
-                Tx.m("directive", did, "agent", agent.id(), "skill", skill, "skill_version", version,
-                        "skill_current", st.skills.get(skill).lastKey(), "model_hash", agent.id(),
+                Tx.m("directive", did, "agent", with.id(), "skill", skill, "skill_version", version,
+                        "skill_current", st.skills.get(skill).lastKey(), "model_hash", with.id(),
                         "source", source, "source_hash", d.get("source_hash")));
-        return Tx.m("tx", Tx.id(tx), "accepted", accepted, "rejected", rejected);
+        return Tx.m("tx", Tx.id(tx), "accepted", accepted, "rejected", rejected, "agent", with.id());
+    }
+
+    private static boolean quoteMatches(String text, int start, int end, String quote) {
+        return start >= 0 && end <= text.length() && start <= end && text.substring(start, end).equals(quote);
     }
 
     private static Map<String, Object> datom(String id, String e, String a, Object v, long nu, long vf, Map<String, Object> q) {
@@ -309,16 +273,49 @@ public final class Engine {
     }
 
     /** Issue a directive for one source and run it straight away. */
-    public synchronized Map<String, Object> extract(String sourceId, Sources src) {
-        return request("extract " + nameOf(state(), sourceId), false, () -> run(issue(sourceId, Policy.DEFAULT_BUDGET), src));
+    public Map<String, Object> extract(String sourceId, Sources src, Agent with) {
+        String did = issue(sourceId, Policy.DEFAULT_BUDGET);
+        return run(did, src, with);
+    }
+
+    public Map<String, Object> extract(String sourceId, Sources src) { return extract(sourceId, src, agent); }
+
+    /**
+     * The settled facts most related to a question, for Ask. A plain word-overlap
+     * score over entity, attribute and value; BM25 and Datalog come with the query slice.
+     */
+    public synchronized List<Object> recall(String question, int limit) {
+        Set<String> words = words(question);
+        List<Object> rows = memory("");
+        List<Object[]> scored = new ArrayList<>();
+        for (Object o : rows) {
+            Map<String, Object> r = castMap(o);
+            Set<String> w = words(r.get("entity") + " " + String.valueOf(r.get("a")).replace('_', ' ') + " " + r.get("v"));
+            int hit = 0;
+            for (String x : w) if (words.contains(x)) hit++;
+            if (hit > 0) scored.add(new Object[]{hit, r});
+        }
+        Collections.sort(scored, (x, y) -> Integer.compare((Integer) y[0], (Integer) x[0]));
+        List<Object> out = new ArrayList<>();
+        for (Object[] x : scored) { if (out.size() >= limit) break; out.add(x[1]); }
+        return out;
+    }
+
+    private static final Set<String> STOP = new HashSet<>(Arrays.asList(
+            "the", "and", "for", "are", "was", "what", "which", "who", "how", "does", "did", "that", "this", "with",
+            "from", "about", "into", "can", "its", "has", "have", "why", "when", "where", "there", "their", "any", "not"));
+
+    static Set<String> words(String s) {
+        Set<String> out = new HashSet<>();
+        for (String w : s.toLowerCase(Locale.ROOT).split("[^\\p{L}\\p{N}]+")) {
+            if (w.length() < 3 || STOP.contains(w)) continue;
+            out.add(w.endsWith("s") && w.length() > 4 ? w.substring(0, w.length() - 1) : w);
+        }
+        return out;
     }
 
     /** Startup step: close this portal's directives that have passed their deadline. */
     public synchronized long reconcile() {
-        return request("expire stale directives", false, this::doReconcile);
-    }
-
-    private long doReconcile() {
         live();
         long n = 0;
         for (Map.Entry<String, Map<String, Object>> e : new TreeMap<>(state().openDirectives).entrySet()) {
@@ -335,10 +332,6 @@ public final class Engine {
 
     /** Copy a fact into culture once k distinct sources agree, or the steward approved it. */
     public synchronized long gate() {
-        return request("run the gate", false, this::doGate);
-    }
-
-    private long doGate() {
         live();
         State st = state();
         notPaused(st);
@@ -372,24 +365,13 @@ public final class Engine {
             copy.put("origin_tx", rep.get("tx"));
             copy.put("derived_from", null);
             copy.put("support", support);
-            note("promote", "Gate: " + factText(st, rep) + " · " + (approved && support < Policy.GATE_K ? "approved" : plural(support, "source", "sources")),
-                    Tx.m("support", support, "approved", approved && support < Policy.GATE_K));
             commit(portalKey, portal, "promote", "culture", Tx.m(
                     "datoms", Collections.singletonList(copy),
                     "decision", Tx.m("key", key, "support", support,
                             "rule", approved && support < Policy.GATE_K ? "approved" : "auto")), null);
             n++;
         }
-        long waiting = held().size();
-        if (waiting > 0) note("hold", "Gate held " + plural(waiting, "fact", "facts") + " for more sources or approval", Tx.m("held", waiting));
         return n;
-    }
-
-    private static String factText(State st, Map<String, Object> d) {
-        Map<String, String> names = st.names();
-        String e = st.find((String) d.get("e"));
-        String ent = names.containsKey(e) ? names.get(e) : e;
-        return "name".equals(d.get("a")) ? "entity " + ent : ent + " " + d.get("a") + " " + display(st, names, d.get("v"));
     }
 
     private static TreeMap<String, List<Map<String, Object>>> groupEpisodes(State st) {
@@ -414,13 +396,12 @@ public final class Engine {
     public synchronized void approve(List<String> keys) {
         List<String> sorted = new ArrayList<>(keys);
         Collections.sort(sorted);
-        request("approve " + plural(sorted.size(), "held fact", "held facts"), true,
-                () -> commit(stewardKey, Tx.STEWARD, "approve", "system", Tx.m("keys", new ArrayList<Object>(sorted)), null));
+        commit(stewardKey, Tx.STEWARD, "approve", "system", Tx.m("keys", new ArrayList<Object>(sorted)), null);
     }
 
-    public synchronized void pause() { request("pause the arbiters", true, () -> commit(stewardKey, Tx.STEWARD, "pause", "system", Tx.m(), null)); }
+    public synchronized void pause() { commit(stewardKey, Tx.STEWARD, "pause", "system", Tx.m(), null); }
 
-    public synchronized void resume() { request("resume the arbiters", true, () -> commit(stewardKey, Tx.STEWARD, "resume", "system", Tx.m(), null)); }
+    public synchronized void resume() { commit(stewardKey, Tx.STEWARD, "resume", "system", Tx.m(), null); }
 
     public synchronized void publishSkill(String name, long version, List<String> tools) {
         List<Object> t = new ArrayList<Object>(tools);
@@ -565,19 +546,12 @@ public final class Engine {
 
     /** Re-read the whole log from disk into a fresh store and replay it. */
     public synchronized Map<String, Object> verify() {
-        return request("verify the log", false, this::doVerify);
-    }
-
-    private Map<String, Object> doVerify() {
         try {
             Store fresh = load(backend);
             String h = State.replay(fresh.valid()).stateHash();
-            note("verify", "Re-read " + plural(fresh.size(), "transaction", "transactions") + " from disk · every hash, signature and link checks out",
-                    Tx.m("ok", true, "count", (long) fresh.size()));
             return Tx.m("ok", true, "count", (long) fresh.size(), "state", h.substring(0, 12),
                     "matches", h.equals(state().stateHash()), "forks", (long) fresh.forkProofs().size());
         } catch (RuntimeException e) {
-            note("verify", "Verification failed: " + e.getMessage(), Tx.m("ok", false));
             return Tx.m("ok", false, "error", String.valueOf(e.getMessage()));
         }
     }

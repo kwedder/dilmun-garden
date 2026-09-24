@@ -19,6 +19,48 @@
       <iframe id="map" src="map.html" title="System map"></iframe>
     </section>
 
+    <section id="tab-ask" class="tab ask-tab" hidden>
+      <div class="ask">
+        <div id="model-card" class="card model-card">
+          <div class="card-head">
+            <div>
+              <div class="label">Model</div>
+              <div id="model-title" class="big">No model yet</div>
+              <div id="model-meta" class="m mono"></div>
+            </div>
+            <span id="model-state" class="pill">none</span>
+          </div>
+          <div id="model-progress" class="progress" hidden><i></i></div>
+          <div id="model-help" class="note" hidden>
+            <p>The app runs one small model on this phone's processor. It never goes online, so the model comes in as a file:</p>
+            <p><b>1.</b> Download MiniCPM5-1B in the GGUF format (a Q4_K_M file is a good balance, under 1 GB).</p>
+            <div class="row"><button id="btn-get-model" class="small">Open the MiniCPM5-1B download page</button></div>
+            <p><b>2.</b> Tap <b>Import model file</b> and pick the .gguf file from your downloads. The app checks it, keeps a copy, and records its fingerprint on everything it writes.</p>
+          </div>
+          <div class="row">
+            <button id="btn-import" class="primary small">Import model file</button>
+            <button id="btn-load" class="small">Load</button>
+            <button id="btn-remove" class="small ghost">Remove</button>
+          </div>
+          <label class="check"><input type="checkbox" id="use-model"> Use the model for extraction on the Sources tab</label>
+        </div>
+
+        <div id="thread" class="thread" aria-live="polite"></div>
+
+        <form id="composer" class="composer" autocomplete="off">
+          <div class="opts">
+            <label class="check"><input type="checkbox" id="opt-memory" checked> Use memory</label>
+            <label class="check"><input type="checkbox" id="opt-think"> Let it think first</label>
+          </div>
+          <div class="send-row">
+            <label class="sr" for="prompt">Your question</label>
+            <textarea id="prompt" rows="1" placeholder="Ask your memory"></textarea>
+            <button id="btn-send" type="submit" class="primary">Send</button>
+          </div>
+        </form>
+      </div>
+    </section>
+
     <section id="tab-sources" class="tab" hidden>
       <div class="pad">
         <h2>Sources</h2>
@@ -31,10 +73,10 @@
         <p id="folder-line" class="meta"></p>
         <ul id="source-list" class="list"></ul>
         <div class="note">
-          <div class="label">What the agent reads in this build</div>
-          <p>Lines written as <code>entity | attribute | value</code>, for example <code>aspirin | treats | fever</code>. Each one is quoted exactly from the file, and the arbiters keep it only if the attribute is in the schema:</p>
+          <div class="label">Without a model</div>
+          <p>The pattern agent reads lines written as <code>entity | attribute | value</code>, for example <code>aspirin | treats | fever</code>. Each one is quoted exactly from the file, and the arbiters keep it only if the attribute is in the schema:</p>
           <p id="schema-line" class="mono"></p>
-          <p>The on-device model takes this slot in a later build. Everything around it (directives, checks, the log, the gate) is already the real thing.</p>
+          <p id="agent-line">When a model is loaded on the Ask tab, Extract uses it instead: it reads each file a passage at a time and proposes facts with quotes, and the arbiters keep only the facts whose quote is really in the file.</p>
         </div>
       </div>
     </section>
@@ -106,6 +148,7 @@
 
   <nav class="tabs" aria-label="Sections">
     <button data-tab="map" aria-current="page">Map</button>
+    <button data-tab="ask">Ask</button>
     <button data-tab="sources">Sources</button>
     <button data-tab="work">Work</button>
     <button data-tab="memory">Memory</button>

@@ -21,8 +21,6 @@ public final class Policy {
     public static final int GATE_K = 2;
     /** Confidence the pattern agent gives its facts, in thousandths. */
     public static final long PATTERN_NU = 800;
-    /** Trace events the engine keeps in memory for the live map. */
-    public static final int TRACE_KEEP = 400;
 
     public static final Map<String, List<Long>> DEFAULT_SKILLS_VERSIONS =
             Collections.singletonMap("ingest", Collections.singletonList(1L));

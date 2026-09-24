@@ -251,8 +251,160 @@ public final class CoreTest {
         List<String[]> am = Ask.messages(new ArrayList<String[]>(), "Is aspirin an NSAID?", rec, true);
         check(am.get(0)[1].contains("[1] aspirin is a NSAID") && am.get(am.size() - 1)[1].equals("Is aspirin an NSAID?"), "the prompt numbers the facts for citation");
         int before2 = g.e.store().size();
+        long rmark = seqOf(g.e.trace(0));
         g.e.recall("aspirin", 5);
         check(g.e.store().size() == before2, "asking writes nothing to the log");
+        check(stepsOf(g.e.trace(rmark)).equals(Collections.singletonList("recall")), "but the read is traced, so the map shows Ask using memory");
+        World hw = new World();
+        hw.src.files.put("ethno.md", "Ethnography is a research method.\n- ethnography | is_a | research method\n");
+        hw.e.scan(hw.src);
+        hw.e.extract("src:ethno.md", hw.src);
+        hw.e.extract("src:notes.md", hw.src);
+        hw.e.extract("src:handbook.md", hw.src);
+        hw.e.gate();
+        List<Object> one = hw.e.recall("What is ethnography?", 5);
+        check(one.size() == 1 && "held".equals(((Map<?, ?>) one.get(0)).get("status")),
+                "with one source, recall still finds the fact, marked as held at the gate");
+        check(Ask.line(1, castMap(one.get(0))).contains("unconfirmed: 1 source, not yet through the gate")
+                && Ask.system(one).contains("unconfirmed come from a single source"), "the prompt tells the model which facts are unconfirmed");
+        List<Object> mixed = hw.e.recall("aspirin fever NSAID", 5);
+        check(!mixed.isEmpty() && "settled".equals(((Map<?, ?>) mixed.get(0)).get("status")) && mixed.toString().contains("held"),
+                "settled facts come first, unconfirmed ones after: " + mixed.size());
+        hw.src.files.put("field.md", "Fieldwork. Ethnography is a research method based on participant observation.\n");
+        hw.e.scan(hw.src);
+        hw.e.extract("src:field.md", hw.src, new ModelAgent(new FakeLlm(
+                "ethnography | is_a | research method | Ethnography is a research method based on participant observation\n"),
+                Policy.SCHEMA_ORDER, null));
+        List<Object> byQuote = hw.e.recall("What is participant observation?", 5);
+        check(byQuote.size() == 1 && byQuote.toString().contains("participant observation"),
+                "a question can match a fact through its quote, not just its words");
+
+        section("the live trace");
+        World lt = new World();
+        lt.e.scan(lt.src);
+        long mark = seqOf(lt.e.trace(0));
+        final int[] nudges = {0};
+        lt.e.onTrace(() -> nudges[0]++);
+        lt.e.extract("src:notes.md", lt.src);
+        List<Object> steps = lt.e.trace(mark);
+        List<Object> main = stepsOf(steps);
+        long factSteps = Collections.frequency(main, "fact");
+        main.removeAll(Collections.singletonList("fact"));
+        check(main.equals(Arrays.asList("request", "steer", "sign", "commit", "deploy", "read", "propose",
+                "check", "sign", "commit", "answer")), "an extract is traced step by step, in order: " + main);
+        check(factSteps == 3 && Json.canon(steps).contains("Refused willow bark · source_of · salicin · attribute not in the schema"),
+                "each proposed fact is traced as kept or refused, with the reason (" + factSteps + ")");
+        check(nudges[0] == steps.size(), "the listener hears every step as it happens");
+        check(seqOf(lt.e.trace(seqOf(steps))) == 0, "reading from the last seq returns nothing new");
+        mark = seqOf(steps);
+        lt.e.pause();
+        rejects(() -> lt.e.extract("src:notes.md", lt.src), "paused", "a paused extract is refused");
+        List<Object> after = lt.e.trace(mark);
+        check(stepsOf(after).get(0).equals("request") && stepsOf(after).get(after.size() - 1).equals("refuse"),
+                "a refusal is traced with its reason: " + stepsOf(after));
+        check(Json.canon(lt.e.trace(0)).length() > 0, "trace events are canonical JSON");
+        int logSize = lt.e.store().size();
+        for (int i = 0; i < 300; i++) lt.e.verify();
+        check(lt.e.trace(0).size() == Policy.TRACE_KEEP, "the trace keeps only the newest " + Policy.TRACE_KEEP + " events");
+        check(lt.e.store().size() == logSize, "tracing writes nothing to the log");
+        boolean badStep = false;
+        try { lt.e.noteWork("commit", "pretend", null); } catch (IllegalArgumentException x) { badStep = true; }
+        check(badStep, "outside work can't pose as an engine step");
+
+        section("the model, passage by passage");
+        World pw = new World();
+        StringBuilder longText = new StringBuilder();
+        for (int i = 0; i < 6; i++) longText.append("Aspirin, an NSAID, is used to treat fever. ").append("Filler sentence number ").append(i).append(" about nothing much at all, repeated to make the passage long enough to split. ".repeat(20)).append("\n\n");
+        pw.src.files.put("long.md", longText.toString());
+        pw.e.scan(pw.src);
+        FakeLlm pf = new FakeLlm("aspirin | is_a | NSAID | Aspirin, an NSAID\naspirin | treats | headache | cures every headache\n");
+        final List<int[]> seenPassages = new ArrayList<>();
+        ModelAgent traced = new ModelAgent(pf, Policy.SCHEMA_ORDER, ModelAgent.traced(pw.e, "long.md", new ModelAgent.Progress() {
+            @Override public void passage(int i, int n) { seenPassages.add(new int[]{i, n}); }
+            @Override public void text(String piece) { }
+        }));
+        long pmark = seqOf(pw.e.trace(0));
+        pw.e.extract("src:long.md", pw.src, traced);
+        List<Object> pev = pw.e.trace(pmark);
+        List<Object> pst = stepsOf(pev);
+        int np = ModelAgent.passages(longText.toString(), ModelAgent.PASSAGE_CHARS).size();
+        check(np > 1 && Collections.frequency(pst, "passage") == np && Collections.frequency(pst, "passage-done") == np,
+                "every passage is traced as the model reads it (" + np + " passages)");
+        check(pst.indexOf("passage") > pst.indexOf("read") && pst.lastIndexOf("passage-done") < pst.indexOf("propose"),
+                "passages come between the read and the proposal");
+        check(Json.canon(pev).contains("Passage 1 of " + np + ": 2 facts proposed, 1 quote found in the text"),
+                "each passage reports what it proposed and how many quotes are really there");
+        check(seenPassages.size() == np, "progress still reaches the caller too");
+
+        section("bulk extract");
+        World bw = new World();
+        bw.src.files.put("third.md", "Third.\n- willow bark | contains | salicin\n");
+        bw.e.scan(bw.src);
+        final List<Runnable> queue = new ArrayList<>();
+        final List<Map<String, Object>> saved = new ArrayList<>();
+        final List<Map<String, Object>> statuses = new ArrayList<>();
+        BulkRun.Agents pattern = (name, prog) -> new Agent.PatternAgent();
+        BulkRun bulk = new BulkRun(bw.e, queue::add, statuses::add, sv -> saved.add(sv));
+        List<String> all = Arrays.asList("src:handbook.md", "src:notes.md", "src:third.md");
+        bulk.start(all, Arrays.asList("handbook.md", "notes.md", "third.md"), true, bw.src, pattern);
+        check(queue.size() == 1, "starting queues one step, not the whole run");
+        int maxOpen = 0, maxQueued = 0;
+        while (!queue.isEmpty()) {
+            Runnable r = queue.remove(0);
+            r.run();
+            maxOpen = Math.max(maxOpen, bw.e.directives().size());
+            maxQueued = Math.max(maxQueued, queue.size());
+        }
+        Map<String, Object> st = bulk.status();
+        check("done".equals(st.get("state")) && ((Number) st.get("extracted")).longValue() == 3, "all three sources are extracted: " + st.get("state"));
+        check(bw.e.results(10).size() == 3, "each source gets its own signed result");
+        check(maxOpen == 0 && maxQueued <= 1, "one directive at a time, issued at its turn, and one step queued at a time");
+        check(((Number) st.get("kept")).longValue() == 6 && ((Number) st.get("refused")).longValue() == 1, "kept and refused are totalled across the run");
+        check(saved.get(saved.size() - 1) == null, "a finished run leaves nothing to resume");
+        check(bw.e.extracted("src:notes.md") && !bw.e.extracted("src:nope"), "the engine knows which sources are already extracted");
+
+        bulk.clear();
+        bulk.start(all, all, true, bw.src, pattern);
+        while (!queue.isEmpty()) queue.remove(0).run();
+        check(((Number) bulk.status().get("skipped")).longValue() == 3 && bw.e.results(10).size() == 3, "a second run skips sources already extracted");
+        bw.src.files.put("third.md", "Third, edited.\n- willow bark | contains | salicin\n- salicin | is_a | glycoside\n");
+        bw.e.scan(bw.src);
+        bulk.clear();
+        bulk.start(all, all, true, bw.src, pattern);
+        while (!queue.isEmpty()) queue.remove(0).run();
+        check(((Number) bulk.status().get("extracted")).longValue() == 1 && ((Number) bulk.status().get("skipped")).longValue() == 2,
+                "a source whose file changed is extracted again, the rest skipped");
+
+        bulk.clear();
+        saved.clear();
+        bulk.start(all, all, false, bw.src, pattern);
+        queue.remove(0).run();
+        bulk.pause();
+        while (!queue.isEmpty()) queue.remove(0).run();
+        check("paused".equals(bulk.status().get("state")) && ((Number) bulk.status().get("next")).longValue() == 1,
+                "pause stops after the source being read");
+        Map<String, Object> resumeFrom = saved.get(saved.size() - 1);
+        check(resumeFrom != null && ((Number) resumeFrom.get("next")).longValue() == 1, "the queue is saved after every source");
+        BulkRun later = new BulkRun(bw.e, queue::add, null, null);
+        later.restore(Json.obj(Json.canon(resumeFrom)));
+        check("interrupted".equals(later.status().get("state")), "a run the app didn't finish comes back as interrupted");
+        int resultsBefore = bw.e.results(50).size();
+        later.resume(bw.src, pattern);
+        while (!queue.isEmpty()) queue.remove(0).run();
+        check("done".equals(later.status().get("state")) && bw.e.results(50).size() == resultsBefore + 2,
+                "resuming carries on from where it stopped, without redoing the first source");
+        bulk.cancel();
+        check("cancelled".equals(bulk.status().get("state")) && saved.get(saved.size() - 1) == null, "cancel keeps what was committed and forgets the rest");
+
+        bulk.clear();
+        bw.e.pause();
+        bulk.start(all, all, false, bw.src, pattern);
+        while (!queue.isEmpty()) queue.remove(0).run();
+        Map<String, Object> ps2 = bulk.status();
+        check("paused".equals(ps2.get("state")) && String.valueOf(ps2.get("why")).contains("paused by the steward")
+                && ((Number) ps2.get("next")).longValue() == 1, "when the steward pauses the arbiters, the bulk run pauses too");
+        bw.e.resume();
+        rejects(() -> bulk.start(all, all, false, bw.src, pattern), "already going", "one bulk run at a time");
 
         section("canonical JSON");
         Map<String, Object> m = Tx.m("b", 1L, "a", Arrays.asList("x", "é\n\"q\""), "c", null, "d", true);
@@ -265,6 +417,19 @@ public final class CoreTest {
         System.out.println();
         System.out.println(passed + " passed, " + failed + " failed");
         if (failed > 0) System.exit(1);
+    }
+
+    @SuppressWarnings("unchecked")
+    static Map<String, Object> castMap(Object o) { return (Map<String, Object>) o; }
+
+    static long seqOf(List<Object> evs) {
+        return evs.isEmpty() ? 0 : ((Number) ((Map<?, ?>) evs.get(evs.size() - 1)).get("seq")).longValue();
+    }
+
+    static List<Object> stepsOf(List<Object> evs) {
+        List<Object> out = new ArrayList<>();
+        for (Object o : evs) out.add(((Map<?, ?>) o).get("step"));
+        return out;
     }
 
     static void section(String name) { System.out.println(); System.out.println(name); }

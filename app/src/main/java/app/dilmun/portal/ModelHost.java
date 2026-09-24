@@ -33,6 +33,7 @@ final class ModelHost {
     private volatile Llama llama;
     private volatile boolean loading;
     private volatile String lastError;
+    private volatile int loadedThreads;
 
     ModelHost(Context context, SharedPreferences prefs) {
         this.context = context;
@@ -73,14 +74,39 @@ final class ModelHost {
         s.put("error", lastError);
         s.put("useForExtraction", prefs.getBoolean("model.extract", true));
         s.put("info", llama == null ? null : llama.info());
-        s.put("threads", (long) Llama.defaultThreads());
+        s.put("threads", (long) (llama != null ? loadedThreads : threads()));
+        s.put("threadsSetting", (long) prefs.getInt("model.threads", 0));
+        s.put("threadsAuto", (long) Llama.defaultThreads());
+        s.put("cores", (long) Runtime.getRuntime().availableProcessors());
         return s;
     }
 
+    /** Threads to run the model on: the user's choice, or a safe default for this phone (0 = automatic). */
+    int threads() {
+        int n = prefs.getInt("model.threads", 0);
+        int cores = Runtime.getRuntime().availableProcessors();
+        return n <= 0 ? Llama.defaultThreads() : Math.max(1, Math.min(cores, n));
+    }
+
+    /** Takes effect the next time the model loads. */
+    void setThreads(int n) {
+        int cores = Runtime.getRuntime().availableProcessors();
+        if (n < 0 || n > cores) throw new IllegalArgumentException("choose between 1 and " + cores + " threads, or automatic");
+        prefs.edit().putInt("model.threads", n).apply();
+    }
+
+    /** Room needed on top of the file itself, so the phone isn't left completely full. */
+    static final long SPARE_BYTES = 200L << 20;
+
     /** Copy the picked file in, checking that it's a GGUF model and hashing it on the way. */
     Map<String, Object> importFrom(ContentResolver cr, Uri uri, String displayName, long size, Progress p) throws Exception {
-        unload();
         File tmp = new File(dir(), "import.partial");
+        if (tmp.exists() && !tmp.delete()) tmp.deleteOnExit();                // a copy an earlier import left behind
+        long free = dir().getUsableSpace();
+        if (size > 0 && free < size + SPARE_BYTES)
+            throw new IllegalStateException("not enough free space: this file needs " + gb(size + SPARE_BYTES)
+                    + " and the phone has " + gb(free) + " free. The downloaded copy can be deleted once it's imported.");
+        unload();
         MessageDigest sha = MessageDigest.getInstance("SHA-256");
         long done = 0;
         InputStream in = cr.openInputStream(uri);
@@ -134,7 +160,9 @@ final class ModelHost {
         try {
             System.loadLibrary("dilmun_llm");
             Llama.init(context.getApplicationInfo().nativeLibraryDir);
-            llama = Llama.load(f.getAbsolutePath(), id(), CONTEXT, Llama.defaultThreads());
+            int t = threads();
+            llama = Llama.load(f.getAbsolutePath(), id(), CONTEXT, t);
+            loadedThreads = t;
         } catch (UnsatisfiedLinkError e) {
             lastError = "this build has no model runtime for this phone's processor";
             throw new IllegalStateException(lastError);
@@ -159,6 +187,8 @@ final class ModelHost {
         if (f != null && !f.delete()) f.deleteOnExit();
         prefs.edit().remove("model.file").remove("model.name").remove("model.sha").apply();
     }
+
+    private static String gb(long n) { return String.format(java.util.Locale.ROOT, "%.1f GB", n / 1e9); }
 
     void setUseForExtraction(boolean on) { prefs.edit().putBoolean("model.extract", on).apply(); }
     boolean useForExtraction() { return prefs.getBoolean("model.extract", true); }

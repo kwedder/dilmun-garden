@@ -8,9 +8,30 @@
   function call(name) {
     const args = Array.prototype.slice.call(arguments, 1);
     if (!B || typeof B[name] !== "function") return { error: "The app's engine isn't connected to this page." };
+    if (name !== "trace") soonTrace();
     try { return JSON.parse(B[name].apply(B, args)); }
     catch (e) { return { error: String(e && e.message || e) }; }
   }
+
+  /* ------------------------------------------------------------ live trace
+     The engine records each step it takes (request, steer, sign, commit, read,
+     check, promote...). We read everything since the last seq and hand it to
+     the map, which plays it back as it happens. */
+  let traceSeq = 0, traceSoon = 0, mapReady = false;
+  const traceBacklog = [];
+  function soonTrace() { if (!traceSoon) traceSoon = setTimeout(() => { traceSoon = 0; drainTrace(); }, 0); }
+  function drainTrace() {
+    const r = call("trace", traceSeq);
+    const evs = r && r.ok;
+    if (!evs || !evs.length) return;
+    traceSeq = evs[evs.length - 1].seq;
+    evs.forEach(e => traceBacklog.push(e));
+    if (traceBacklog.length > 200) traceBacklog.splice(0, traceBacklog.length - 200);
+    if (mapReady) postToMap({ type: "trace", events: evs });
+    evs.forEach(activityFromTrace);
+  }
+  // Background work (a folder scan) nudges us through dilmunEvent; this catches anything else.
+  setInterval(drainTrace, 1500);
   function ok(r, quiet) {
     if (r && r.error !== undefined) { if (!quiet) toast(r.error, true); return undefined; }
     return r ? r.ok : undefined;
@@ -51,8 +72,70 @@
   }
   function fmtParams(n) { return n >= 1e9 ? (n / 1e9).toFixed(2) + "B" : (n / 1e6).toFixed(0) + "M"; }
 
+  /* ------------------------------------------------------------ activity card
+     On the Ask tab, between the conversation and the composer: what the app is
+     doing (sources read, passages, facts kept or refused, model events, errors).
+     Folded, it's one line; errors open it. Same stream as the map's feed. */
+  const ACT_KEEP = 150;
+  let actOpen = false, actCount = 0, actBad = false, actLast = "";
+  try { actOpen = localStorage.getItem("dilmun.activity") === "open"; } catch (e) { /* storage may be unavailable */ }
+  const ACT_STEPS = { scan: 1, read: 1, passage: 1, "passage-done": 1, fact: 1, check: 1, refuse: 1, promote: 1,
+                      hold: 1, bulk: 1, model: 1, recall: 1, verify: 1 };
+  function activityFromTrace(ev) {
+    if (!ACT_STEPS[ev.step]) return;
+    let tone = null;
+    if (ev.step === "refuse" || (ev.step === "verify" && !ev.ok)) tone = "bad";
+    else if (ev.step === "fact") tone = ev.more ? null : ev.kept ? "good" : "bad";
+    else if (ev.step === "check") tone = ev.rejected > 0 && !ev.accepted ? "bad" : "good";
+    else if (ev.step === "promote" || (ev.step === "bulk" && ev.event === "done")) tone = "good";
+    // a refused fact is expected work, not an error: only a refused request opens the card
+    activity(ev.text, tone, ev.t, ev.step === "refuse");
+  }
+  function activity(text, tone, t, alarm) {
+    const list = $("activity-list");
+    const li = el("li", tone || null);
+    const d = new Date(t || Date.now());
+    li.appendChild(el("span", "tm", [d.getHours(), d.getMinutes(), d.getSeconds()].map(x => String(x).padStart(2, "0")).join(":")));
+    li.appendChild(el("span", null, text));
+    list.prepend(li);
+    while (list.children.length > ACT_KEEP) list.lastChild.remove();
+    actCount++;
+    actLast = text;
+    if (alarm) { actBad = true; setActOpen(true, false); }
+    paintActivity();
+  }
+  function paintActivity() {
+    const box = $("activity");
+    box.hidden = actCount === 0;
+    const b = bulkState && (bulkState.state === "running" || bulkState.busy) ? bulkState : null;
+    let line = actLast;
+    if (b) {
+      line = "Bulk: source " + Math.min(b.total, b.next + 1) + " of " + b.total + (b.current ? " · " + b.current : "")
+        + (b.passages ? " · passage " + b.passage + " of " + b.passages : "") + " · " + b.kept + " kept, " + b.refused + " refused";
+    } else if (activeExtract) {
+      line = "Reading " + activeExtract.name + (activeExtract.passages ? " · passage " + activeExtract.passage + " of " + activeExtract.passages : "");
+    }
+    $("activity-line").textContent = line;
+    $("activity-count").textContent = String(actCount);
+    box.classList.toggle("live", !!(b || activeExtract));
+    box.classList.toggle("bad", actBad);
+    $("activity-head").setAttribute("aria-expanded", String(actOpen));
+    $("activity-list").hidden = !actOpen;
+  }
+  function setActOpen(open, save) {
+    actOpen = open;
+    if (!open) actBad = false;
+    if (save) { try { localStorage.setItem("dilmun.activity", open ? "open" : "closed"); } catch (e) { /* ignore */ } }
+    paintActivity();
+  }
+  $("activity-head").addEventListener("click", () => setActOpen(!actOpen, true));
+
   let toastTimer = 0;
-  function toast(text, bad, sticky) {
+  function toast(text, bad, sticky, traced) {
+    // On the Ask tab, messages go into the activity card instead of covering the chat.
+    // (traced: the engine's trace already put this in the card.)
+    if (!traced) activity(text, bad ? "bad" : null, Date.now(), !!bad);
+    if (current === "ask") return;
     const t = $("toast");
     t.textContent = text;
     t.className = bad ? "bad" : "";
@@ -141,6 +224,8 @@
     $("btn-import").disabled = !!modelBusy;
     $("btn-remove").hidden = !file;
     $("use-model").checked = !!m.useForExtraction;
+    renderThreads(m);
+    renderDiag(m);
     if (m.error && !modelBusy) $("model-meta").textContent += (bits.length ? " · " : "") + m.error;
     modelCompact = !!m.loaded && modelCompact;
     card.classList.toggle("compact", modelCompact);
@@ -171,6 +256,57 @@
       error: e => { modelBusy = null; if (e) toast(e, true); renderModel(); }
     });
   });
+  /* Threads: automatic (a safe default for this phone), or a fixed count up to the core count. */
+  function renderThreads(m) {
+    const sel = $("threads");
+    const cores = m.cores || 4, setting = m.threadsSetting || 0;
+    const opts = [0].concat([1, 2, 4, 6, 8].filter(n => n <= cores));
+    if (setting && opts.indexOf(setting) < 0) opts.push(setting);
+    const key = opts.join(",") + "|" + setting + "|" + m.threadsAuto;
+    if (sel.dataset.key !== key) {
+      sel.dataset.key = key;
+      sel.innerHTML = "";
+      opts.forEach(n => {
+        const o = el("option", null, n === 0 ? "Automatic (" + m.threadsAuto + ")" : String(n));
+        o.value = String(n);
+        sel.appendChild(o);
+      });
+    }
+    sel.value = String(setting);
+    sel.disabled = !!modelBusy;
+    $("threads-note").textContent = m.loaded ? "running on " + m.threads + " of " + cores + " cores" : cores + " cores on this device";
+  }
+  $("threads").addEventListener("change", e => {
+    const r = ok(call("setThreads", Number(e.target.value)));
+    if (r === undefined) { renderModel(); return; }
+    if (typeof r === "number") {                         // loaded: reloading with the new count
+      modelBusy = "load";
+      jobs[r] = {
+        done: () => { modelBusy = null; toast("Model reloaded on " + (Number(e.target.value) || "the automatic number of") + " threads"); renderModel(); refreshSummary(); },
+        error: err => { modelBusy = null; if (err) toast(err, true); renderModel(); }
+      };
+    } else toast("Saved: applies the next time the model loads");
+    renderModel();
+  });
+
+  /* What llama.cpp says about the file and this device, for when the output looks wrong. */
+  function renderDiag(m) {
+    const box = $("model-diag"), dl = $("model-diag-list");
+    const i = m.info;
+    box.hidden = !i;
+    if (!i) return;
+    dl.innerHTML = "";
+    const row = (k, v, bad) => { dl.appendChild(el("dt", null, k)); dl.appendChild(el("dd", bad ? "bad" : null, v)); };
+    row("model", i.desc || "?");
+    row("name", i.name || "(not set in the file)");
+    row("architecture", i.arch || "?");
+    row("tokenizer", (i.tokenizer || "?") + (i.pre ? " · pre-tokenizer " + i.pre : " · no pre-tokenizer named") + (i.n_vocab ? " · " + i.n_vocab + " tokens" : ""), !i.pre);
+    row("chat template", i.template ? "from the file" : "not in the file: a generic format is used", !i.template);
+    row("context", i.n_ctx + " tokens here · trained for " + i.n_ctx_train);
+    const feats = String(i.system || "").split("|").map(x => x.trim()).filter(x => / = 1$/.test(x)).map(x => x.replace(/ = 1$/, "").replace(/^.*: /, ""));
+    row("CPU features", feats.length ? feats.join(" ") : (i.system || "?"));
+  }
+
   $("use-model").addEventListener("change", e => { ok(call("setUseModel", e.target.checked)); refreshSummary(); });
 
   /* Two taps for anything destructive, instead of a dialog. */
@@ -227,13 +363,20 @@
     }
     if (a.facts && a.facts.length) {
       const d = el("details");
-      d.appendChild(el("summary", null, "Memory given: " + plural(a.facts.length, "fact", "facts")));
+      const unconfirmed = a.facts.filter(f => f.status === "held").length;
+      d.appendChild(el("summary", null, "Memory given: " + plural(a.facts.length, "fact", "facts") + (unconfirmed ? " · " + unconfirmed + " unconfirmed" : "")));
       const box = el("div", "facts-used");
-      a.facts.forEach((f, i) => box.appendChild(el("div", null, "[" + (i + 1) + "] " + f.entity + " " + String(f.a).replace(/_/g, " ") + " " + f.v)));
+      a.facts.forEach((f, i) => {
+        const held = f.status === "held";
+        const how = held ? "unconfirmed, " + plural(f.support, "source", "sources") : f.support >= 2 ? plural(f.support, "source", "sources") : "approved";
+        const line = el("div", held ? "held" : null, "[" + (i + 1) + "] " + f.entity + " " + String(f.a).replace(/_/g, " ") + " " + f.v + " · " + how);
+        if (f.quote) line.title = "Quote: " + f.quote;
+        box.appendChild(line);
+      });
       d.appendChild(box);
       a.body.appendChild(d);
     } else if (a.facts && a.memory) {
-      a.body.appendChild(el("div", "stats", "No settled facts matched this question."));
+      a.body.appendChild(el("div", "stats", "No facts in memory matched this question, so the model answered from general knowledge."));
     }
     if (a.stats) {
       const s = a.stats;
@@ -291,6 +434,10 @@
 
   /* ------------------------------------------------------------ sources */
   const extracting = {};         // source id → true while its job runs
+  let activeExtract = null;      // {id, name, passage, passages} for the one-source Extract
+  let bulkState = null;          // the bulk run's status, from "bulk" events
+  const selected = new Set();
+  let sourceRows = [], doneIds = new Set();
 
   function renderSources() {
     const s = summary || {};
@@ -301,39 +448,152 @@
     $("folder-line").textContent = parts.join(" · ");
     $("btn-samples").hidden = !!s.samples;
     $("schema-line").textContent = (s.schema || []).filter(a => a !== "name").join(" · ");
+    if (!bulkState) bulkState = ok(call("bulkStatus"), true) || null;
+    renderBulk();
     const list = $("source-list");
     list.innerHTML = "";
-    const src = ok(call("sources")) || [];
-    if (!src.length) { empty(list, "Nothing mapped yet. Choose a folder of .txt or .md files, or add the sample texts."); return; }
-    src.forEach(x => {
+    sourceRows = ok(call("sources")) || [];
+    doneIds = new Set(ok(call("extracted"), true) || []);
+    Array.from(selected).forEach(id => { if (!sourceRows.some(x => x.id === id)) selected.delete(id); });
+    $("select-bar").hidden = !sourceRows.length;
+    if (!sourceRows.length) { empty(list, "Nothing mapped yet. Choose a folder of .txt or .md files, or add the sample texts."); paintSelection(); return; }
+    const busyBulk = bulkBusy();
+    sourceRows.forEach(x => {
       const row = li();
-      if (extracting[x.id]) row.className = "working";
+      const bulkHere = bulkState && bulkState.busy && bulkState.current === x.name;
+      if (extracting[x.id] || bulkHere) row.className = "working";
+      const pick = el("input", "pick");
+      pick.type = "checkbox";
+      pick.checked = selected.has(x.id);
+      pick.setAttribute("aria-label", "Select " + x.name);
+      pick.addEventListener("change", () => { if (pick.checked) selected.add(x.id); else selected.delete(x.id); paintSelection(); });
       const main = el("div", "main");
       main.appendChild(el("div", "t", x.name));
-      main.appendChild(el("div", "m", "hash " + x.hash));
-      const b = el("button", "small", "Extract");
-      b.disabled = !!extracting[x.id];
-      b.addEventListener("click", () => startExtract(x, row, b));
+      let meta = "hash " + x.hash;
+      if (activeExtract && activeExtract.id === x.id && activeExtract.passages) meta += " · passage " + activeExtract.passage + " of " + activeExtract.passages;
+      if (bulkHere && bulkState.passages) meta += " · passage " + bulkState.passage + " of " + bulkState.passages;
+      const m = el("div", "m", meta);
+      m.dataset.src = x.id;
+      main.appendChild(m);
+      row.appendChild(pick);
       row.appendChild(main);
+      if (doneIds.has(x.id)) row.appendChild(el("span", "badge done", "extracted"));
+      const b = el("button", "small", "Extract");
+      b.disabled = !!extracting[x.id] || busyBulk;
+      b.addEventListener("click", () => startExtract(x, row, b));
       row.appendChild(b);
       list.appendChild(row);
     });
+    paintSelection();
   }
+
+  function paintSelection() {
+    const n = selected.size;
+    $("btn-extract-selected").textContent = n ? "Extract selected (" + n + ")" : "Extract selected";
+    $("btn-extract-selected").disabled = !n || bulkBusy();
+    $("btn-extract-all").disabled = !sourceRows.length || bulkBusy();
+    const done = sourceRows.filter(x => doneIds.has(x.id)).length;
+    $("select-line").textContent = plural(sourceRows.length, "source", "sources") + " · " + done + " already extracted" + (n ? " · " + n + " selected" : "");
+  }
+
+  function bulkBusy() { return !!(bulkState && (bulkState.state === "running" || bulkState.state === "paused" || bulkState.state === "interrupted" || bulkState.busy)); }
 
   function startExtract(x, row, b) {
     extracting[x.id] = true;
+    activeExtract = { id: x.id, name: x.name, passage: 0, passages: 0 };
     row.className = "working"; b.disabled = true;
+    paintActivity();
     const id = job("extract", {
-      progress: ev => { if (ev.passage) toast("Reading " + x.name + ": passage " + ev.passage + " of " + ev.passages, false, true); },
+      progress: ev => {
+        if (!ev.passage) return;
+        activeExtract.passage = ev.passage; activeExtract.passages = ev.passages;
+        const m = document.querySelector('.m[data-src="' + CSS.escape(x.id) + '"]');
+        if (m) m.textContent = "hash " + x.hash + " · passage " + ev.passage + " of " + ev.passages;
+        paintActivity();
+      },
       done: r => {
-        delete extracting[x.id];
+        delete extracting[x.id]; activeExtract = null;
         const refused = (r.rejected || []).length;
         toast(plural(r.accepted, "fact", "facts") + " committed from " + x.name + (refused ? " · " + refused + " refused" : ""));
         refresh();
       },
-      error: e => { delete extracting[x.id]; if (e) toast(e, true); refresh(); }
+      error: e => { delete extracting[x.id]; activeExtract = null; if (e) toast(e, true); refresh(); }
     }, x.id);
-    if (id === undefined) { delete extracting[x.id]; row.className = ""; b.disabled = false; }
+    if (id === undefined) { delete extracting[x.id]; activeExtract = null; row.className = ""; b.disabled = false; paintActivity(); }
+  }
+
+  /* Bulk: one source after another, each with its own directive and result. */
+  function startBulk(rows) {
+    if (!rows.length) return;
+    const req = JSON.stringify({ ids: rows.map(x => x.id), names: rows.map(x => x.name), skip: $("opt-skip").checked });
+    const st = ok(call("bulkStart", req));
+    if (st === undefined) return;
+    bulkState = st;
+    toast("Bulk run started: " + plural(rows.length, "source", "sources"), false, false, true);
+    renderSources();
+  }
+  $("btn-extract-all").addEventListener("click", () => startBulk(sourceRows));
+  $("btn-extract-selected").addEventListener("click", () => startBulk(sourceRows.filter(x => selected.has(x.id))));
+  $("btn-select-all").addEventListener("click", () => { sourceRows.forEach(x => selected.add(x.id)); renderSources(); });
+  $("btn-select-none").addEventListener("click", () => { selected.clear(); $("select-filter").value = ""; renderSources(); });
+  $("select-filter").addEventListener("input", e => {
+    const q = e.target.value.trim().toLowerCase();
+    selected.clear();
+    if (q) sourceRows.forEach(x => { if (x.name.toLowerCase().indexOf(q) >= 0) selected.add(x.id); });
+    renderSources();
+  });
+  function bulkAction(name, msg) {
+    const st = ok(call(name));
+    if (st === undefined) return;
+    bulkState = st;
+    if (msg) toast(msg);
+    renderSources();
+  }
+  $("btn-bulk-pause").addEventListener("click", () => bulkAction("bulkPause", "Pausing after the source being read"));
+  $("btn-bulk-resume").addEventListener("click", () => bulkAction("bulkResume", "Bulk run resumed"));
+  $("btn-bulk-cancel").addEventListener("click", () => { if (confirmTwice($("btn-bulk-cancel"), "Tap again to cancel")) bulkAction("bulkCancel", "Bulk run cancelled; what was committed stays"); });
+  $("btn-bulk-clear").addEventListener("click", () => bulkAction("bulkClear", null));
+
+  const BULK_LABEL = { running: "running", paused: "paused", interrupted: "interrupted", cancelled: "cancelled", done: "done", idle: "" };
+  function renderBulk() {
+    const b = bulkState;
+    const card = $("bulk-card");
+    if (!b || b.state === "idle" || !b.total) { card.hidden = true; paintActivity(); return; }
+    card.hidden = false;
+    const at = Math.min(b.total, b.next + (b.busy ? 1 : 0));
+    $("bulk-title").textContent = b.state === "done" ? "Finished " + plural(b.total, "source", "sources")
+      : b.busy && b.current ? "Source " + at + " of " + b.total + " · " + b.current
+      : "Stopped at source " + (b.next + 1) + " of " + b.total;
+    $("bulk-meta").textContent = b.extracted + " extracted · " + b.skipped + " skipped · " + b.failed + " failed · "
+      + b.kept + " facts kept · " + b.refused + " refused" + (b.busy && b.passages ? " · passage " + b.passage + " of " + b.passages : "");
+    const pill = $("bulk-state");
+    pill.textContent = BULK_LABEL[b.state] || b.state;
+    pill.className = "pill " + (b.state === "running" ? "running" : b.state === "done" ? "done" : b.state === "cancelled" ? "" : "paused");
+    const frac = b.total ? (b.next + (b.busy && b.passages ? b.passage / b.passages : 0)) / b.total : 0;
+    $("bulk-progress").firstChild.style.width = Math.min(100, 100 * frac) + "%";
+    const errs = [];
+    if (b.why) errs.push((b.state === "interrupted" ? "Interrupted: " : "Paused: ") + b.why);
+    (b.errors || []).slice(-3).forEach(e => errs.push(e.source + ": " + e.error));
+    $("bulk-errors").textContent = errs.join(" · ");
+    $("btn-bulk-pause").hidden = b.state !== "running";
+    $("btn-bulk-resume").hidden = !(b.state === "paused" || b.state === "interrupted");
+    $("btn-bulk-cancel").hidden = !(b.state === "running" || b.state === "paused" || b.state === "interrupted");
+    $("btn-bulk-clear").hidden = !(b.state === "done" || b.state === "cancelled");
+    paintActivity();
+  }
+  function onBulk(st) {
+    const was = bulkState;
+    bulkState = st;
+    const moved = !was || was.next !== st.next || was.state !== st.state || was.busy !== st.busy;
+    if (current === "sources" && moved) renderSources();
+    else if (current === "sources") {
+      renderBulk();
+      const m = st.busy && st.current ? sourceRows.find(x => x.name === st.current) : null;
+      const node = m ? document.querySelector('.m[data-src="' + CSS.escape(m.id) + '"]') : null;
+      if (node && st.passages) node.textContent = "hash " + m.hash + " · passage " + st.passage + " of " + st.passages;
+    } else paintActivity();
+    if (was && was.state === "running" && st.state === "done") { toast("Bulk run finished: " + st.extracted + " extracted, " + st.skipped + " skipped · " + st.kept + " facts kept", false, false, true); refreshSummary(); }
+    if (moved && !st.busy) refreshSummary();
   }
 
   $("btn-folder").addEventListener("click", () => { if (B) B.pickFolder(); else toast("The folder picker needs the app.", true); });
@@ -488,6 +748,8 @@
   };
 
   window.dilmunEvent = function (name, ev) {
+    if (name === "trace") { drainTrace(); return; }
+    if (name === "bulk") { onBulk(ev); return; }
     if (name === "token") {
       const h = jobs[ev.id];
       if (h && h.token) h.token(ev.text);
@@ -526,4 +788,47 @@
   call("reconcile");
   refreshSummary();
   $("map").addEventListener("load", () => { if (summary) postToMap({ type: "stats", stats: summary }); postToMap({ type: "visible", visible: current === "map" }); });
+  // The map may have loaded before this script ran; ask it to say ready again.
+  postToMap({ type: "hello" });
+
+  /* ------------------------------------------------------------ the map asks */
+  let nextSource = 0;
+  window.addEventListener("message", ev => {
+    if (ev.source !== ($("map") && $("map").contentWindow)) return;
+    const d = ev.data || {};
+    if (d.type === "ready") {
+      if (mapReady) return;
+      mapReady = true;
+      if (summary) postToMap({ type: "stats", stats: summary });
+      postToMap({ type: "visible", visible: current === "map" });
+      postToMap({ type: "trace", events: traceBacklog.slice(), backlog: true });
+      return;
+    }
+    if (d.type !== "act") return;
+    if (d.name === "samples") {
+      const r = ok(call("useSamples"));
+      if (r !== undefined) toast("Mapped " + plural(r.total, "source", "sources"));
+    } else if (d.name === "extract") {
+      // the next source not yet extracted, else take turns; it runs as a job and the map shows each step
+      const src = ok(call("sources")) || [];
+      if (!src.length) { toast("Nothing mapped yet. Add the sample texts or choose a folder on the Sources tab.", true); return; }
+      const done = new Set(ok(call("extracted"), true) || []);
+      let pick = src.find(x => !done.has(x.id));
+      if (!pick) pick = src[nextSource++ % src.length];
+      activeExtract = { id: pick.id, name: pick.name, passage: 0, passages: 0 };
+      extracting[pick.id] = true;
+      job("extract", {
+        progress: ev => { if (ev.passage) { activeExtract.passage = ev.passage; activeExtract.passages = ev.passages; paintActivity(); } },
+        done: r => { delete extracting[pick.id]; activeExtract = null; toast(plural(r.accepted, "fact", "facts") + " committed from " + pick.name + ((r.rejected || []).length ? " · " + r.rejected.length + " refused" : "")); refresh(); },
+        error: e => { delete extracting[pick.id]; activeExtract = null; if (e) toast(e, true); refresh(); }
+      }, pick.id);
+    } else if (d.name === "gate") {
+      const n = ok(call("gate"));
+      if (n !== undefined) toast(n ? plural(n, "fact", "facts") + " promoted to culture" : "Nothing new has enough support");
+    } else if (d.name === "verify") {
+      const v = ok(call("verify"));
+      if (v !== undefined) toast(v.ok ? "Log verified · " + plural(v.count, "transaction", "transactions") : "Verification failed: " + v.error, !v.ok);
+    }
+    refresh();
+  });
 })();

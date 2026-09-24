@@ -28,6 +28,8 @@ public final class LlamaTest {
             Llama m = Llama.load(path, "model:test", 1024, 2);
             Map<String, Object> info = m.info();
             check(info.containsKey("arch") && ((Number) info.get("n_ctx")).intValue() == 1024, "loads, and reports " + info.get("arch") + " with a 1024-token context");
+            check(info.get("tokenizer") instanceof String && info.containsKey("pre") && ((Number) info.get("n_vocab")).intValue() > 0,
+                    "reports its tokenizer for the diagnostics: " + info.get("tokenizer") + ", pre-tokenizer '" + info.get("pre") + "', " + info.get("n_vocab") + " tokens");
             check(m.countTokens("aspirin treats fever") > 0, "counts tokens");
 
             List<String[]> msgs = new ArrayList<>();

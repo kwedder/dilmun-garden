@@ -14,11 +14,16 @@ public final class Ask {
     /** Earlier turns kept in the prompt, so a 1B model's context isn't spent on old talk. */
     static final int HISTORY = 6;
 
-    /** One fact, readable, numbered for citation. */
+    /** One fact, readable, numbered for citation, with how sure the memory is of it and its quote. */
     public static String line(int n, Map<String, Object> f) {
         long support = f.get("support") instanceof Number ? ((Number) f.get("support")).longValue() : 1;
+        boolean held = "held".equals(f.get("status"));
+        String how = held ? "unconfirmed: " + support + (support == 1 ? " source" : " sources") + ", not yet through the gate"
+                : support >= 2 ? support + " sources" : "approved";
+        Object q = f.get("quote");
+        String quote = q instanceof String && !((String) q).isEmpty() ? " (source says: \"" + q + "\")" : "";
         return "[" + n + "] " + f.get("entity") + " " + String.valueOf(f.get("a")).replace('_', ' ') + " " + f.get("v")
-                + (support >= 2 ? " (" + support + " sources)" : " (approved)");
+                + " (" + how + ")" + quote;
     }
 
     public static String system(List<Object> facts) {
@@ -27,8 +32,9 @@ public final class Ask {
         if (facts.isEmpty()) {
             sb.append("The memory holds no facts about this question. Say so in one short sentence, then answer from general knowledge and say that part is not from memory.");
         } else {
-            sb.append("These facts are from the user's settled memory; each one passed a promotion gate. ")
-              .append("When a fact supports your answer, cite it by number, like [1]. ")
+            sb.append("These facts are from the user's memory. Facts marked with sources or approved passed a promotion gate; ")
+              .append("facts marked unconfirmed come from a single source and have not passed it yet, so say so when you rely on one. ")
+              .append("Base your answer on these facts first, and cite each one you use by number, like [1]. ")
               .append("If the facts don't cover the question, say so, then answer from general knowledge and say that part is not from memory. Be brief.\n\nFacts:\n");
             for (int i = 0; i < facts.size(); i++) {
                 @SuppressWarnings("unchecked") Map<String, Object> f = (Map<String, Object>) facts.get(i);

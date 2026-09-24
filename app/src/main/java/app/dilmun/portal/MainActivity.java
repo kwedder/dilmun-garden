@@ -8,6 +8,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.view.View;
 import android.view.WindowInsets;
+import android.view.WindowManager;
 import android.webkit.ValueCallback;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
@@ -81,6 +82,19 @@ public final class MainActivity extends Activity {
         i.addCategory(Intent.CATEGORY_OPENABLE);
         i.setType("*/*");
         startActivityForResult(i, PICK_MODEL);
+    }
+
+    /**
+     * Keep the screen on while a bulk run works through its queue: work stops
+     * when the phone sleeps, until runs move to a foreground service.
+     */
+    void keepAwake(final boolean on) {
+        runOnUiThread(new Runnable() {
+            @Override public void run() {
+                if (on) getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            }
+        });
     }
 
     void openLink(String url) {

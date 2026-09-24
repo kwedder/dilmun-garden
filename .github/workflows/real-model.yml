@@ -1,0 +1,61 @@
+name: Real model on ARM
+
+# Run by hand from the Actions tab. It downloads real GGUF files from Hugging
+# Face and checks, on a 64-bit ARM runner (the same processor family as phones),
+# that each one answers a question with a known answer. Never on pushes or pull
+# requests: it depends on an outside download.
+on:
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: Hugging Face model repository
+        default: openbmb/MiniCPM5-1B-GGUF
+      files:
+        description: Which files to test (space-separated name patterns)
+        default: "Q4_K_M F16"
+
+permissions:
+  contents: read
+
+env:
+  LLAMA_TAG: b11160
+
+jobs:
+  arm:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Build the core and the native model layer
+        run: |
+          mkdir -p build/core
+          javac -encoding UTF-8 -d build/core $(find core/src -name '*.java')
+          git clone --depth 1 --branch "$LLAMA_TAG" https://github.com/ggml-org/llama.cpp "$RUNNER_TEMP/llama.cpp"
+          cmake -S app/src/main/cpp -B build/native -DLLAMA_DIR="$RUNNER_TEMP/llama.cpp" -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/native --target dilmun_llm -j 4
+
+      - name: Download the model files
+        env:
+          REPO: ${{ inputs.repo }}
+          FILES: ${{ inputs.files }}
+        run: |
+          mkdir -p models
+          curl -fsSL "https://huggingface.co/api/models/$REPO" -o models/index.json
+          for pat in $FILES; do
+            name=$(python3 -c "import json,sys; fs=[s['rfilename'] for s in json.load(open('models/index.json'))['siblings'] if s['rfilename'].endswith('.gguf') and sys.argv[1].lower() in s['rfilename'].lower()]; print(fs[0] if fs else '')" "$pat")
+            if [ -z "$name" ]; then echo "::warning::no .gguf file matching $pat in $REPO"; continue; fi
+            echo "Downloading $name"
+            curl -fL --retry 3 "https://huggingface.co/$REPO/resolve/main/$name" -o "models/$(basename "$name")"
+          done
+          ls -la models
+
+      - name: Ask each model a question with a known answer
+        run: |
+          LIB=$(find build/native -name 'libdilmun_llm.so' | head -1)
+          export LD_LIBRARY_PATH="$(find build/native -name '*.so*' -printf '%h\n' | sort -u | paste -sd:)"
+          java -Ddilmun.llm="$PWD/$LIB" -cp build/core app.dilmun.core.ModelSmoke models/*.gguf

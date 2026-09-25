@@ -55,7 +55,7 @@ public final class ExtractEval {
                     if (why[i] == null) kept++; else if (verdict.equals("refused")) other++; else grounding++;
                     System.out.println("FACT " + Json.canon(Tx.m("source", s.get("name"), "e", ((List<Object>) f.get("ident")).get(1),
                             "a", f.get("a"), "v", f.get("v"), "quote", ((Map<String, Object>) f.get("quote")).get("text"),
-                            "verdict", verdict, "reason", why[i])));
+                            "verdict", verdict, "reason", why[i], "by", f.containsKey("by") ? f.get("by") : "model")));
                 }
                 for (Object raw : (List<Object>) p.get("raw"))
                     System.out.println("RAW " + Json.canon(raw));

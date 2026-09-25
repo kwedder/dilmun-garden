@@ -45,7 +45,7 @@ public final class Grounding {
             "but", "with", "without", "for", "to", "from", "by", "as", "than", "because", "including", "such", "like",
             "is", "are", "was", "were", "be", "been", "being", "has", "have", "had", "can", "could", "may", "might",
             "will", "would", "should", "must", "do", "does", "did", "used", "called", "known", "based", "found",
-            "into", "within", "between", "among", "through", "during", "after", "before", "about", "over", "under",
+            "into", "within", "between", "among", "through", "during", "after", "before", "about", "over", "under", "upon",
             "since", "until", "if", "so", "not", "also", "only", "it", "its", "they", "their", "this", "these", "those",
             "e.g", "i.e", "etc", "via", "per", "whereas", "although", "though", "unless", "whether", "yet", "then");
 
@@ -93,12 +93,66 @@ public final class Grounding {
     static final Set<String> CUE_BACK = set("such", "like", "including", "e.g", "example", "especially", "notably");
 
     private static final Set<String> ARTICLES = set("a", "an", "the");
-    private static final Pattern TOKEN = Pattern.compile("[\\p{L}\\p{N}]+(?:['’.\\-][\\p{L}\\p{N}]+)*|[,;:()\\[\\]—–.!?\"“”]");
+    private static final Pattern TOKEN = Pattern.compile("\\p{Lu}\\.(?=\\s+\\p{Lu})|[\\p{L}\\p{N}]+(?:['’.\\-][\\p{L}\\p{N}]+)*|[,;:()\\[\\]—–.!?\"“”]");
     private static final Set<String> DETERMINERS = set("a", "an", "the", "this", "that", "these", "those");
     private static final Set<String> CALL = set("call", "calls", "called");
     private static final Set<String> TITLES = set("Dr", "Mr", "Mrs", "Ms", "St", "Prof", "Sr", "Jr");
 
     private static final Set<String> PRONOUNS = set("it", "they", "this", "these", "its", "their", "he", "she", "such");
+
+    /**
+     * Words that make a phrase a clause, not a name: a concept holding one of
+     * these ("exploring_how_smartphones_take", "who", "we") isn't a thing.
+     */
+    static final Set<String> CLAUSE = set("how", "who", "whom", "what", "which", "why", "when", "where", "whether",
+            "we", "they", "he", "she", "it", "you", "i", "me", "us", "them", "him", "our", "your", "my", "their", "its",
+            "is", "are", "was", "were", "be", "been", "not", "no", "can", "could", "may", "might", "will", "would",
+            "should", "must", "do", "does", "did", "have", "has", "had", "if", "because", "other", "self", "something",
+            "anything", "everything", "nothing", "someone", "everyone", "there", "here", "often", "rather", "perhaps",
+            "sometimes", "still", "well", "ever", "never", "always", "also", "even", "just", "instead", "yet", "same", "lot",
+            "worth", "kind", "sort", "more", "less", "fewer");
+
+    /** Words ending in -ly that are things, not manners. */
+    private static final Set<String> LY_NOUNS = set("family", "italy", "ally", "assembly", "supply", "anomaly", "monopoly",
+            "butterfly", "july", "reply", "belly", "lily", "rally", "sicily", "folly", "jelly", "bully", "melancholy");
+
+    /**
+     * Words that describe rather than name, after an "are" with no article:
+     * "anthropologists are committed", "Indians are familiar". A fixed list and a
+     * few endings that English uses for adjectives and participles.
+     */
+    private static final Set<String> ADJECTIVES = set("familiar", "curious", "same", "similar", "different", "able", "aware",
+            "likely", "cool", "violent", "ignorant", "inaccurate", "widespread", "contemporary", "complex", "fine", "united",
+            "worth", "better", "best", "responsible", "necessary", "possible", "rare", "free", "open", "present", "absent",
+            "available", "true", "real", "unique", "vast", "important", "central", "common", "mobile", "native", "primitive",
+            "superior", "inferior", "backward", "civilized", "enlightened", "unequal", "equal", "human", "natural", "normal",
+            "polarized", "reciprocal", "universal", "due", "subject", "prone", "key", "interested", "busy");
+
+    /** Longest concept, in words, not counting "of" and "and". Anything longer is a clause cut from the sentence. */
+    static final int CONCEPT_WORDS = 5;
+
+    /**
+     * The words a sentence must use, between entity and value, to state each
+     * relation. Without one, both words merely appear in the same sentence:
+     * "red | part_of | color" from "...from pinkish beige to dark brown..." is
+     * co-occurrence, not a fact.
+     */
+    static final java.util.Map<String, Set<String>> CUES = new java.util.HashMap<>();
+    static {
+        CUES.put("part_of", set("part", "parts", "member", "members", "among", "one", "include", "includes", "included", "including",
+                "comprise", "comprises", "comprised", "comprising", "consist", "consists", "belong", "belongs", "component",
+                "components", "subfield", "subfields", "branch", "branches", "within", "division", "section", ":"));
+        CUES.put("contains", set("contain", "contains", "contained", "containing", "include", "includes", "included", "including",
+                "comprise", "comprises", "consist", "consists", "has", "have", "with", "hold", "holds", "house", "houses", ":"));
+        CUES.put("causes", set("cause", "causes", "caused", "causing", "lead", "leads", "led", "result", "results", "resulted",
+                "resulting", "produce", "produces", "produced", "trigger", "triggers", "triggered", "drive", "drives", "drove",
+                "due", "because", "responsible", "effect", "effects", "create", "creates", "created", "shape", "shapes",
+                "shaped", "promote", "promotes", "promoted", "brought", "bring", "brings", "forced", "force", "forces"));
+        CUES.put("treats", set("treat", "treats", "treated", "treating", "treatment", "cure", "cures", "cured", "relieve",
+                "relieves", "relieved", "heal", "heals", "healing", "remedy", "therapy", "against", "for"));
+        CUES.put("located_in", set("in", "at", "on", "near", "located", "found", "inside", "within", "of", "across", "throughout"));
+        CUES.put("author", set("by", "wrote", "written", "writes", "write", "author", "authored", "'s", "his", "her"));
+    }
 
     /** Checks against the quote alone, as if it were a whole sentence. */
     public static String check(String entity, String attribute, String value, String quote) {
@@ -114,6 +168,12 @@ public final class Grounding {
         List<String> e = words(entity), v = words(value), q = tokens(sentence);
         if (e.isEmpty() || v.isEmpty()) return "the fact is incomplete";
         if (stems(e).equals(stems(v))) return "the value repeats the entity";
+        String bad = notAThing(e, attribute, false);
+        if (bad == null && "is_a".equals(attribute) && describes(v, q, find(q, v))) bad = "the value describes, it doesn't name a kind";
+        if (bad == null) bad = notAThing(v, attribute, true);
+        if (bad != null) return bad;
+        if (!"defined_as".equals(attribute) && (containsAll(stems(v), stems(e)) || containsAll(stems(e), stems(v))))
+            return "one side just repeats the other";
         if (find(tokens(quote), v).isEmpty()) return "the value is not in the quote";
         List<Integer> es = find(q, e), vs = find(q, v);
         if (vs.isEmpty()) return "the value is not in the quote";
@@ -128,8 +188,81 @@ public final class Grounding {
             return "the quote does not say that " + entity.trim() + " " + ("is_a".equals(attribute) ? "is a" : "is defined as") + " " + value.trim();
         }
         if ("date".equals(attribute)) return null;                 // "the 1992 film": a date is whole on its own
-        for (int at : vs) if (endsPhrase(q, at + v.size())) return null;
-        return "the value is cut short: the quote goes on to \"" + q.get(vs.get(0) + v.size()) + "\"";
+        boolean complete = false;
+        for (int at : vs) if (endsPhrase(q, at + v.size())) complete = true;
+        if (!complete) return "the value is cut short: the quote goes on to \"" + q.get(vs.get(0) + v.size()) + "\"";
+        if (("located_in".equals(attribute) || "author".equals(attribute)) && !named(raw, q, vs))
+            return "the value is not a name: " + attribute + " needs a place or a person";
+        Set<String> cues = CUES.get(attribute);
+        if (cues == null) return null;
+        if (es.isEmpty()) {                                          // "It lies in Peru": the cue before the value
+            for (int b : vs) for (int i = 0; i < b; i++) if (cues.contains(q.get(i))) return null;
+        }
+        for (int a : es) for (int b : vs) {
+            int lo = Math.min(a + e.size(), b + v.size()), hi = Math.max(a, b);
+            for (int i = lo; i < hi; i++) if (cues.contains(q.get(i))) return null;
+        }
+        return "the sentence doesn't say " + attribute.replace('_', ' ') + ": no word for it between " + entity.trim() + " and " + value.trim();
+    }
+
+    /** Why a phrase isn't a thing (a pronoun, a clause, a date that isn't one), or null. */
+    private static String notAThing(List<String> w, String attribute, boolean isValue) {
+        String side = isValue ? "the value" : "the entity";
+        if (isValue && "date".equals(attribute)) {
+            for (String t : w) if (t.matches("\\d{3,4}s?|\\d{1,2}(st|nd|rd|th)|\\d{1,3},\\d{3}")) return null;
+            return "the value is not a date";
+        }
+        if (isValue && "defined_as".equals(attribute)) return null;   // a definition is a phrase by nature
+        int n = 0;
+        for (String t : w) {
+            if (CLAUSE.contains(t)) return side + " is not a thing: \"" + t + "\" makes it a clause or a pronoun";
+            if (!"of".equals(t) && !"and".equals(t) && !ARTICLES.contains(t)) n++;
+        }
+        if (n > CONCEPT_WORDS) return side + " is a clause, not a name (" + n + " words)";
+        if (!isValue && w.size() == 1 && (NUMBER_WORDS.contains(w.get(0)) || w.get(0).matches("\\d+")))
+            return side + " is only a number";
+        if (w.size() == 1 && w.get(0).endsWith("ly") && w.get(0).length() > 4 && !LY_NOUNS.contains(w.get(0)))
+            return side + " is not a thing: \"" + w.get(0) + "\" is a manner, not a name";
+        boolean graded = true;
+        for (String t : w) if (!MODIFIERS.contains(t)) graded = false;
+        if (graded) return side + " is only a grading word";
+        return null;
+    }
+
+    /**
+     * Whether an is_a value is an adjective or participle: its last word is one,
+     * and no article comes before it where it stands ("are committed", not "are
+     * a committed group").
+     */
+    private static boolean describes(List<String> v, List<String> q, List<Integer> vs) {
+        String h = v.get(v.size() - 1);
+        boolean adj = ADJECTIVES.contains(h) || PARTICIPLES.contains(h) || h.length() > 4 && (h.endsWith("ed") || h.endsWith("ous") || h.endsWith("ful")
+                || h.endsWith("able") || h.endsWith("ible") || h.endsWith("less") || h.endsWith("ical") || h.endsWith("ric")
+                || h.endsWith("ive") && !h.endsWith("tive") || h.endsWith("ly") && !LY_NOUNS.contains(h));
+        if (!adj) return false;
+        if (v.size() == 1 && (ADJECTIVES.contains(h) || PARTICIPLES.contains(h))) return true;   // "a violent" names nothing
+        for (int b : vs) {
+            int k = b - 1;
+            while (k >= 0 && MODIFIERS.contains(q.get(k))) k--;
+            if (k >= 0 && ARTICLES.contains(q.get(k))) return false;
+        }
+        return true;
+    }
+
+    private static boolean containsAll(List<String> big, List<String> small) {
+        return big.size() > small.size() && big.containsAll(small);
+    }
+
+    /** Whether the value is written as a name somewhere it occurs: capitalized mid-sentence, or an acronym. */
+    private static boolean named(List<String> raw, List<String> q, List<Integer> vs) {
+        for (int b : vs) {
+            String t = raw.get(b);
+            if (!proper(t)) continue;
+            if (b == 0) continue;
+            String prev = q.get(b - 1);
+            if (!".".equals(prev) && !"!".equals(prev) && !"?".equals(prev)) return true;
+        }
+        return false;
     }
 
     /** Whether the entity at a and the value at b are linked the way the relation says. */
@@ -148,6 +281,7 @@ public final class Grounding {
         if (a >= b + vn) {                                            // V ... E
             List<String> between = q.subList(b + vn, a);
             if (isA && links(between, LINK_BACK, CUE_BACK)) return true;        // "NSAIDs such as ibuprofen"
+            if (isA && suchAsList(between)) return true;                        // "…, such as political science, religious studies, and economics"
             if (links(between, NAMING_LINK, NAMING)) return true;               // "this practice is called fieldwork"
             if (!isA && between.size() == 1 && ":".equals(between.get(0))) return true; // "...distinctive cultures: holism"
             if (between.isEmpty()) {
@@ -159,6 +293,21 @@ public final class Grounding {
             }
         }
         return false;
+    }
+
+    /** "such as A, B, and": what comes before a later item of a "such as" list. */
+    private static boolean suchAsList(List<String> between) {
+        int k = 0;
+        if (k < between.size() && ",".equals(between.get(k))) k++;
+        if (k + 1 >= between.size() || !"such".equals(between.get(k)) || !"as".equals(between.get(k + 1))) return false;
+        boolean sep = false;
+        for (int i = k + 2; i < between.size(); i++) {
+            String t = between.get(i);
+            if (".".equals(t) || ";".equals(t) || ":".equals(t) || "(".equals(t) || CLAUSE.contains(t) || COPULAS.contains(t)) return false;
+            if (",".equals(t) || "and".equals(t) || "or".equals(t)) sep = true;
+        }
+        String last = between.get(between.size() - 1);
+        return sep && (",".equals(last) || "and".equals(last) || "or".equals(last));
     }
 
     private static boolean proper(String t) {
@@ -182,9 +331,9 @@ public final class Grounding {
      */
     public static String concept(String phrase, String context) {
         List<String> ws = new ArrayList<>();
-        for (String t : rawTokens(phrase)) if (Character.isLetterOrDigit(t.charAt(0))) ws.add(t);
+        for (String t : rawTokens(phrase)) if (Character.isLetterOrDigit(t.charAt(0))) ws.add(t.endsWith(".") ? t.substring(0, t.length() - 1) : t);
         while (ws.size() > 1 && (ARTICLES.contains(ws.get(0).toLowerCase(Locale.ROOT))
-                || MODIFIERS.contains(ws.get(0).toLowerCase(Locale.ROOT)))) ws.remove(0);
+                || MODIFIERS.contains(ws.get(0).toLowerCase(Locale.ROOT)) && !proper(ws.get(1)))) ws.remove(0);   // "True Lies" keeps "True"
         if (ws.isEmpty()) return "";
         Set<String> named = null;
         if (context != null) {
@@ -202,7 +351,7 @@ public final class Grounding {
         List<String> out = new ArrayList<>();
         for (int i = 0; i < ws.size(); i++) {
             String w = ws.get(i);
-            boolean acronym = w.length() > 1 && Character.isUpperCase(w.charAt(0)) && Character.isUpperCase(w.charAt(1));
+            boolean acronym = Character.isUpperCase(w.charAt(0)) && (w.length() == 1 || Character.isUpperCase(w.charAt(1)));   // "NSAID", the "M" of "Henry M. Stanley"
             boolean keep = proper(w) && (acronym || (named != null ? named.contains(w) : i > 0 || later));
             out.add(keep ? w : w.toLowerCase(Locale.ROOT));
         }
@@ -222,7 +371,7 @@ public final class Grounding {
      * The repair only ever takes words from the sentence, so it can't invent.
      */
     public static String[] repair(String entity, String attribute, String value, String quote, String sentence, String before) {
-        if (quote.indexOf('|') >= 0 || "date".equals(attribute)) return null;
+        if (quote.indexOf('|') >= 0 || !("is_a".equals(attribute) || "defined_as".equals(attribute))) return null;
         List<String> raw = rawTokens(sentence), q = tokens(sentence);
         List<Integer> es = find(q, words(entity)), vs = find(q, words(value));
         int en = words(entity).size(), vn = words(value).size();
@@ -231,7 +380,7 @@ public final class Grounding {
         for (int b : vs) {
             int end = b + vn;
             // run on through the phrase, and through "of" into its complement: "vast" → "vast field of study"
-            while (end < q.size() && end - b < vn + 6 && Character.isLetterOrDigit(q.get(end).charAt(0))
+            while (end < q.size() && end - b < vn + 3 && Character.isLetterOrDigit(q.get(end).charAt(0)) && !CLAUSE.contains(q.get(end))
                     && (!endsPhrase(q, end) || "of".equals(q.get(end)) && end + 1 < q.size() && !endsPhrase(q, end + 1))) end++;
             if (end > b + vn) values.add(join(raw, b, end));
         }
@@ -258,6 +407,196 @@ public final class Grounding {
             sb.append(raw.get(i));
         }
         return sb.toString();
+    }
+
+    // ------------------------------------------------------------ harvest
+
+    /** Where a subject stops, walking back from its verb. */
+    private static final Set<String> SUBJECT_STOP = set("a", "an", "the", "this", "these", "those", "that", "and", "or", "but",
+            "in", "on", "at", "to", "for", "from", "by", "with", "as", "which", "who", "whom", "whose", "while", "when",
+            "where", "although", "because", "if", "so", "than", "then", "also", "simply", "however", "moreover", "thus", "all");
+    private static final Set<String> COPULAS = set("is", "are", "was", "were");
+
+    /**
+     * The facts a sentence states in the few forms these rules can read for
+     * certain, with no model: "E is a V", "E, a V,", "V is called E", "V known
+     * as E", "V such as E1, E2 and E3", "the primatologist Carel van Schaik".
+     * Each comes back as {entity, attribute, value} and still goes through
+     * {@link #check} at the arbiters like any proposal.
+     */
+    public static List<String[]> harvest(String sentence) {
+        List<String[]> out = new ArrayList<>();
+        List<String> raw = rawTokens(sentence), q = tokens(sentence);
+        int n = q.size();
+        for (int i = 0; i < n; i++) {
+            String t = q.get(i);
+            // E is/are (a|an|the|one of the) V
+            if (COPULAS.contains(t) && i > 0 && i + 1 < n && !"not".equals(q.get(i + 1))) {
+                int es = subjectStart(q, i);
+                int vs = i + 1;
+                while (vs < n && (ARTICLES.contains(q.get(vs)) || MODIFIERS.contains(q.get(vs)) || "of".equals(q.get(vs)) && vs > i + 1 && "one".equals(q.get(vs - 1)))) vs++;
+                int ve = phraseEnd(q, vs);
+                boolean passive = vs < n && (PARTICIPLES.contains(q.get(vs)) || q.get(vs).endsWith("ed") && q.get(vs).length() > 4);
+                if (es < i && ve > vs && (cleanStart(q, es) || proper(raw.get(es)) && es > 0) && !passive) {
+                    out.add(new String[]{join(raw, es, i), "is_a", join(raw, vs, ve)});
+                    // V is called / known as E: a name given to the thing
+                    int k = i + 1;
+                    while (k < n && ("also".equals(q.get(k)) || "often".equals(q.get(k)) || "commonly".equals(q.get(k)) || "locally".equals(q.get(k)) || "usually".equals(q.get(k)))) k++;
+                }
+            }
+            // V (is|are)? called|known as|referred to as|termed E
+            if (NAMING.contains(t) && i > 0 && !("known".equals(t) && !(i + 1 < n && "as".equals(q.get(i + 1))))
+                    && !("referred".equals(t) && !(i + 2 < n && "to".equals(q.get(i + 1)) && "as".equals(q.get(i + 2))))) {
+                int k = i + 1;
+                if (k < n && ("as".equals(q.get(k)) || "to".equals(q.get(k)))) k++;
+                if (k < n && "as".equals(q.get(k))) k++;
+                while (k < n && ARTICLES.contains(q.get(k))) k++;
+                int ee = phraseEnd(q, k);
+                int ve = i;
+                while (ve > 0 && COPULAS.contains(q.get(ve - 1)) || ve > 0 && ("also".equals(q.get(ve - 1)) || "locally".equals(q.get(ve - 1)) || "often".equals(q.get(ve - 1)) || ",".equals(q.get(ve - 1)))) ve--;
+                int vs = subjectStart(q, ve);                                   // "This area of study is called": keeps its "of"
+                if (ee > k && vs < ve && cleanStart(q, vs)) out.add(new String[]{join(raw, k, ee), "is_a", join(raw, vs, ve)});
+            }
+            // E, a V,  /  E (a V)  /  Name, the V of   (", the" only after a name: "the brain, the heart" is a list)
+            if ((",".equals(t) || "(".equals(t)) && i > 0 && i + 1 < n && ARTICLES.contains(q.get(i + 1))) {
+                int es = subjectStart(q, i);
+                int vs = i + 2;
+                while (vs < n && MODIFIERS.contains(q.get(vs))) vs++;
+                int ve = phraseEnd(q, vs);
+                boolean the = "the".equals(q.get(i + 1));
+                String next = ve < n ? q.get(ve) : ".";
+                boolean list = ",".equals(next) && ve + 1 < n && (ARTICLES.contains(q.get(ve + 1)) || proper(raw.get(ve + 1))
+                                || "and".equals(q.get(ve + 1)) || "or".equals(q.get(ve + 1)))
+                        || "and".equals(next) || "or".equals(next);
+                boolean closes = ",".equals(next) || ".".equals(next) || ")".equals(next) || ";".equals(next) || PREPOSITIONS.contains(next)
+                        || next.endsWith("ing") || "who".equals(next) || "which".equals(next);
+                boolean named = proper(raw.get(es)) && es > 0;                  // a name marks its own edges: "from Kinshasa, the capital"
+                boolean ok = !list && closes && (cleanStart(q, es) || named) && (!the || proper(raw.get(i - 1)) && (",".equals(next) || ".".equals(next) || ")".equals(next) || "of".equals(next)));
+                if (ok && es < i && ve > vs) out.add(new String[]{join(raw, es, i), "is_a", join(raw, vs, ve)});
+            }
+            // V such as E1, E2, and E3  /  V, including E
+            // ("including" is left out: "parts of the world, including Brazil" is part_of, not is_a)
+            if ("such".equals(t) && i + 1 < n && "as".equals(q.get(i + 1))) {
+                int ve = i;
+                if (ve > 0 && ",".equals(q.get(ve - 1))) ve--;
+                int vs = kindStart(q, ve);
+                if (!cleanStart(q, vs)) vs = ve;                                  // "objects made by human beings, such as tools": not human beings
+                int k = i + 2;
+                boolean last = false;
+                while (k < n && vs < ve && !last) {
+                    while (k < n && (ARTICLES.contains(q.get(k)) || "and".equals(q.get(k)) || "or".equals(q.get(k)) || ",".equals(q.get(k)))) {
+                        if ("and".equals(q.get(k)) || "or".equals(q.get(k))) last = true;   // "…, and economics": the list's last item
+                        k++;
+                    }
+                    int ee = phraseEnd(q, k);
+                    if (ee <= k) break;
+                    out.add(new String[]{join(raw, k, ee), "is_a", join(raw, vs, ve)});
+                    k = ee;
+                    if (k >= n || !(",".equals(q.get(k)) || "and".equals(q.get(k)) || "or".equals(q.get(k)))) break;
+                }
+            }
+            // the primatologist Carel van Schaik: a title in lower case, then a name
+            if (i > 0 && proper(raw.get(i)) && !proper(raw.get(i - 1)) && Character.isLetter(raw.get(i - 1).charAt(0))
+                    && !SUBJECT_STOP.contains(q.get(i - 1)) && !COPULAS.contains(q.get(i - 1)) && !AFTER_VALUE.contains(q.get(i - 1))
+                    && !PREPOSITIONS.contains(q.get(i - 1)) && !q.get(i - 1).endsWith("ed")) {
+                int ne = i;
+                while (ne < n) {
+                    if (proper(raw.get(ne)) && raw.get(ne).length() == 1 && ne + 2 < n && ".".equals(q.get(ne + 1)) && proper(raw.get(ne + 2))) ne += 2;  // "Henry M. Stanley"
+                    else if (proper(raw.get(ne)) && !(ne > i && raw.get(ne).length() == 1)
+                            || ("van".equals(q.get(ne)) || "de".equals(q.get(ne))) && ne + 1 < n && proper(raw.get(ne + 1))) ne++;
+                    else break;
+                }
+                int ts = kindStart(q, i);
+                boolean lower = !proper(raw.get(i - 1)) && titleHead(q.get(i - 1));   // the title's head names a role: "Dutch primatologist"
+                if (ts < i && ne - i >= 2 && lower) out.add(new String[]{join(raw, i, ne), "is_a", join(raw, ts, i)});
+            }
+        }
+        return out;
+    }
+
+    private static final Set<String> PREPOSITIONS = set("by", "with", "from", "to", "in", "on", "at", "for", "of", "upon", "into",
+            "about", "among", "between", "through", "during", "against", "toward", "towards", "under", "over", "across",
+            "around", "beyond", "within", "without", "behind", "despite", "near", "throughout", "via", "per");
+
+    /** Irregular participles: "objects made by", "the world is told". */
+    static final Set<String> PARTICIPLES = set("made", "done", "seen", "told", "known", "given", "taken", "shown", "grown", "born",
+            "built", "held", "kept", "left", "lost", "brought", "thought", "found", "used", "spread", "set", "put", "cut", "led",
+            "paid", "sold", "sent", "spent", "won", "worn", "written", "driven", "chosen", "broken", "spoken", "hidden", "felt");
+
+    /** Words a noun phrase may follow and still start cleanly. */
+    private static final Set<String> OPENERS = set(",", ":", "(", ";", "\"", "“", "the", "a", "an", "this", "these", "those",
+            "other", "many", "some", "several", "most", "its", "their", "our", "his", "her", "all", "each", "every", "both");
+
+    /**
+     * Whether the phrase at start begins cleanly: at the sentence's start, or
+     * after an article or a comma. After a preposition or "and" it's the tail
+     * of a bigger phrase ("a person from the US or Europe is called") and the
+     * rules can't tell what the whole thing is, so they don't guess.
+     */
+    private static boolean cleanStart(List<String> q, int start) {
+        if (start == 0) return true;
+        String p = q.get(start - 1);
+        if (!OPENERS.contains(p)) return false;
+        if (ARTICLES.contains(p) && start >= 2 && PREPOSITIONS.contains(q.get(start - 2))) return false;  // "times of the year": a complement
+        return !(ARTICLES.contains(p) || "this".equals(p) || "these".equals(p)) || start < 2 || !q.get(start - 2).endsWith("ing");  // "Researching this argument is"
+    }
+
+    /** What a title before a name ends in: "the primatologist Carel van Schaik", "the 1994 film True Lies". */
+    private static boolean titleHead(String t) {
+        return t.endsWith("ist") || t.endsWith("er") || t.endsWith("or") || t.endsWith("ian") || t.endsWith("ic")
+                || set("king", "queen", "chief", "leader", "poet", "film", "book", "song", "novel", "album", "president",
+                       "minister", "emperor", "pope", "saint", "general", "judge", "scholar", "anthropologist").contains(t);
+    }
+
+    private static final Set<String> NUMBER_WORDS = set("one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
+            "ten", "dozen", "hundred", "thousand", "million", "billion", "first", "second", "third", "last");
+
+    /** Like subjectStart, but a kind stops at "of": "the distribution of human traits such as" → human traits. */
+    private static int kindStart(List<String> q, int end) {
+        int s = end;
+        while (s > 0 && end - s < 4) {
+            String t = q.get(s - 1);
+            if (!Character.isLetterOrDigit(t.charAt(0)) || SUBJECT_STOP.contains(t) || COPULAS.contains(t) || CLAUSE.contains(t)
+                    || PREPOSITIONS.contains(t) || t.endsWith("ing") && t.length() > 4) break;   // "featuring dishes such as": not featuring
+            s--;
+        }
+        return s;
+    }
+
+    /** Where the noun phrase ending just before end starts: walks back over words, at most five. */
+    private static int subjectStart(List<String> q, int end) {
+        int s = end;
+        while (s > 0 && end - s < 5) {
+            String t = q.get(s - 1);
+            if (!Character.isLetterOrDigit(t.charAt(0)) || SUBJECT_STOP.contains(t) || COPULAS.contains(t) || CLAUSE.contains(t)
+                    || PREPOSITIONS.contains(t) && !"of".equals(t)) break;
+            s--;
+        }
+        return s;
+    }
+
+    /** Where the noun phrase starting at start ends: at a phrase boundary, through "of", at most five words. */
+    private static int phraseEnd(List<String> q, int start) {
+        int e = start;
+        // (initials: "Henry M. Stanley" runs on over "M.")
+        while (e < q.size() && content(q, start, e) < CONCEPT_WORDS && Character.isLetterOrDigit(q.get(e).charAt(0)) && !CLAUSE.contains(q.get(e))
+                && !(e > start && (PREPOSITIONS.contains(q.get(e)) && !"of".equals(q.get(e)) || PARTICIPLES.contains(q.get(e))
+                        || q.get(e).endsWith("ed") && q.get(e).length() > 4))
+                && (!endsPhrase(q, e) || "of".equals(q.get(e)) && e > start && e + 1 < q.size() && Character.isLetterOrDigit(q.get(e + 1).charAt(0)) && !endsPhrase(q, e + 1)
+                    || q.get(e).endsWith("ing") && e > start && needsNoun(q.get(e - 1))))   // "intentional chopping": the -ing word is the noun
+            e++;
+        return e;
+    }
+
+    private static int content(List<String> q, int from, int to) {
+        int c = 0;
+        for (int i = from; i < to; i++) if (!"of".equals(q.get(i)) && !"and".equals(q.get(i)) && !ARTICLES.contains(q.get(i))) c++;
+        return c;
+    }
+
+    /** An adjective that can't end a noun phrase: "evidence of intentional". */
+    private static boolean needsNoun(String t) {
+        return t.length() > 4 && (t.endsWith("al") || t.endsWith("ous") || t.endsWith("ive") || t.endsWith("ic") || t.endsWith("ful"));
     }
 
     /** The pattern agent quotes a whole "entity | attribute | value" line. */

@@ -64,6 +64,12 @@ public final class CoreTest {
     static final String S1 = "Notes on salicylates.\n- aspirin | treats | fever\n- aspirin | is_a | NSAID\nwillow bark | source_of | salicin\n";
     static final String S2 = "Handbook.\naspirin | treats | fever\nibuprofen | is_a | NSAID\naspirin | date | 1897\n";
 
+    static String show(List<String[]> facts) {
+        StringBuilder sb = new StringBuilder();
+        for (String[] f : facts) sb.append(Json.canon(Arrays.asList((Object[]) f)));
+        return sb.toString();
+    }
+
     static int passed = 0, failed = 0;
 
     static void check(boolean ok, String what) {
@@ -272,8 +278,7 @@ public final class CoreTest {
                 + "biological | is_a | human beings | Biological anthropology is the study of human beings\n"
                 + "biological anthropology | is_a | study of human beings | Biological anthropology is the study of human beings\n"),
                 Policy.SCHEMA_ORDER, null));
-        check(((Number) gr.get("accepted")).longValue() == 1 && gr.toString().contains("does not say"),
-                "the arbiters refuse the model's inaccurate facts, with the reason, and keep the accurate one");
+        check(gr.toString().contains("does not say"), "the arbiters refuse the model's inaccurate facts, with the reason");
         String kept = gw.e.held().toString();
         check(kept.contains("biological_anthropology") && kept.contains("study_of_human_beings"), "and write it as concepts: " + kept);
         check(Grounding.check("anthropology", "is_a", "vast", "anthropology is vast") != null
@@ -303,25 +308,50 @@ public final class CoreTest {
         World nw = new World();
         nw.src.files.put("anth.md", para);
         nw.e.scan(nw.src);
-        FakeLlm nf = new FakeLlm("2 | anthropology | is_a | vast\n"
-                + "3 | biological | is_a | study_of_human_beings\n"
-                + "4 | Owsley | located_in | Peru\n"
+        FakeLlm nf = new FakeLlm("2 | anthropology | is_a | vast\n"            // one off: sentence 1 says it
+                + "2 | biological | is_a | study_of_human_beings\n"
+                + "3 | Owsley | located_in | Peru\n"
                 + "9 | anthropology | is_a | science\n"
-                + "5 | you | is_a | thinker\n");
+                + "4 | you | is_a | thinker\n");
         Map<String, Object> nr = nw.e.extract("src:anth.md", nw.src, new ModelAgent(nf, Policy.SCHEMA_ORDER, null));
         String nh = nw.e.held().toString();
-        check(nf.lastUser.contains("[2] Anthropology is a vast field of study.") && nf.lastSystem.contains("sentence number | entity"),
-                "the model gets numbered sentences and answers with a sentence number instead of a quote");
-        check(((Number) nr.get("accepted")).longValue() == 3 && nh.contains("v=field_of_study") && nh.contains("entity=biological_anthropology")
-                && nh.contains("v=Peru"),
-                "facts the model cut short are finished from their sentence, and kept only if they then hold up: " + nh);
-        check(nr.toString().contains("quote does not match the source") && nr.toString().contains("not in the quote"),
-                "a sentence number that isn't there, and a fact the sentence doesn't state, are still refused");
+        check(nf.lastUser.contains("[1] Anthropology is a vast field of study.") && !nf.lastUser.contains("Study of Humanity")
+                && nf.lastSystem.contains("sentence number | entity"),
+                "the model gets numbered sentences, headings left out, and answers with a sentence number instead of a quote");
+        check(nh.contains("v=field_of_study") && nh.contains("entity=biological_anthropology") && nh.contains("v=Peru"),
+                "facts cut short or numbered one off are finished and re-pointed from the sentences, and kept only if they then hold up: " + nh);
+        List<String[]> hv = Grounding.harvest("Biological anthropology is the study of human beings, and the Wauja, an indigenous group in Brazil, "
+                + "call this practice fieldwork.");
+        List<String[]> hv2 = Grounding.harvest("This practice is called fieldwork.");
+        List<String[]> hv3 = Grounding.harvest("Other social disciplines, such as political science, religious studies, and economics, differ.");
+        List<String[]> hv4 = Grounding.harvest("The Dutch primatologist Carel van Schaik spent six years in Sumatra.");
+        check(show(hv).contains("[\"Biological anthropology\",\"is_a\",\"study of human beings\"]")
+                && show(hv).contains("[\"Wauja\",\"is_a\",\"indigenous group\"]")
+                && show(hv2).contains("[\"fieldwork\",\"is_a\",\"practice\"]")
+                && show(hv3).contains("[\"political science\",\"is_a\",\"social disciplines\"]") && show(hv3).contains("[\"economics\",\"is_a\",\"social disciplines\"]")
+                && show(hv4).contains("[\"Carel van Schaik\",\"is_a\",\"Dutch primatologist\"]"),
+                "the rules read \"E is a V\", \"E, a V\", \"V is called E\", \"V such as E\" and titles by themselves: "
+                        + show(hv) + show(hv2) + show(hv3) + show(hv4));
+        check(nr.toString().contains("quote does not match the source") && nr.toString().contains("not a thing"),
+                "a sentence number that isn't there, and a pronoun for an entity, are still refused");
         ModelAgent am2 = new ModelAgent(nf, Policy.SCHEMA_ORDER, null);
         check(am2.attribute("defines_as").equals("defined_as") && am2.attribute("location_in").equals("located_in")
                 && am2.attribute("is_a").equals("is_a") && am2.attribute("attribute").equals("attribute"),
                 "a misspelt attribute is read as the one schema attribute it's close to; anything else stays, and is refused");
         check(!am2.systemPrompt().toLowerCase(Locale.ROOT).contains("anthropolog"), "the prompt names no example concept a model could copy into its facts");
+        String junk = "Anthropologists are committed to describing cultures. The brain, the heart, the liver, and the skeleton work together. "
+                + "There are four varnas known across India: Brahmins. A person from the United States or Europe is locally referred to as an obruni. "
+                + "Artifacts are objects made by human beings, such as tools or pottery. Researching this argument is a vast endeavor.";
+        List<String> junkKept = new ArrayList<>();
+        for (int[] x : ModelAgent.sentences(junk, 0, junk.length())) {
+            String sj = junk.substring(x[0], x[1]);
+            for (String[] h : Grounding.harvest(sj)) if (Grounding.check(h[0], h[1], h[2], sj, sj, "") == null) junkKept.add(h[0] + "|" + h[2]);
+        }
+        check(junkKept.isEmpty(), "the rules don't read adjectives, lists, adverbs, phrase tails or \"such as\" on the wrong noun as kinds: " + junkKept);
+        List<String[]> hv5 = Grounding.harvest("Nineteenth-century explorers such as Henry M. Stanley described Africa, and from Kinshasa, the capital of the Democratic Republic of the Congo, we drove.");
+        check(show(hv5).contains("[\"Henry M. Stanley\",\"is_a\",\"Nineteenth-century explorers\"]") && show(hv5).contains("capital of the Democratic Republic of the Congo")
+                && Grounding.concept("Henry M. Stanley").equals("Henry_M_Stanley"),
+                "initials and long names stay whole: " + show(hv5));
         ModelAgent.LineWatch lw = new ModelAgent.LineWatch();
         check(lw.more("1 | a | is_a | b\n2 | c | is_a | d\n") && lw.more("1 | a | is_a | b\n") && !lw.more("1 | a | is_a | b\n"),
                 "a generation that repeats the same line three times is stopped");

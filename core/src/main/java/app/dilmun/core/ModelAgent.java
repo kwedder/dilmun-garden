@@ -94,6 +94,33 @@ public final class ModelAgent implements Agent {
     }
 
     /**
+     * A small model sometimes numbers a fact one or two sentences off. When the
+     * sentence it named holds neither its entity nor its value, but a neighbour
+     * within two holds both, the fact points at that neighbour instead.
+     */
+    @SuppressWarnings("unchecked")
+    static void repoint(Map<String, Object> f, String text, List<int[]> sents) {
+        Map<String, Object> q = (Map<String, Object>) f.get("quote");
+        long start = ((Number) q.get("start")).longValue();
+        int at = -1;
+        for (int i = 0; i < sents.size(); i++) if (sents.get(i)[0] == start) at = i;
+        if (at < 0) return;
+        List<String> e = Grounding.words(String.valueOf(((List<Object>) f.get("ident")).get(1))), v = Grounding.words(String.valueOf(f.get("v")));
+        if (e.isEmpty() || v.isEmpty() || holds(text, sents.get(at), v)) return;
+        for (int d = 1; d <= 2; d++)
+            for (int k : new int[]{at - d, at + d})
+                if (k >= 0 && k < sents.size() && holds(text, sents.get(k), v) && holds(text, sents.get(k), e)) {
+                    int[] x = sents.get(k);
+                    f.put("quote", Tx.m("start", (long) x[0], "end", (long) x[1], "text", text.substring(x[0], x[1])));
+                    return;
+                }
+    }
+
+    private static boolean holds(String text, int[] span, List<String> words) {
+        return java.util.Collections.indexOfSubList(Grounding.tokens(text.substring(span[0], span[1])), words) >= 0;
+    }
+
+    /**
      * The schema attribute a model meant: its own spelling if it's in the schema,
      * else the one attribute within two edits of it, three for a long name ("defines_as" → defined_as,
      * "location_in" → located_in). Otherwise as written, and the arbiters refuse it.
@@ -129,7 +156,7 @@ public final class ModelAgent implements Agent {
         for (int p = 0; p < passages.size(); p++) {
             int from = passages.get(p)[0], to = passages.get(p)[1];
             if (progress != null) progress.passage(p + 1, passages.size());
-            List<int[]> sents = sentences(text, from, to);
+            List<int[]> sents = readable(text, from, to);
             StringBuilder user = new StringBuilder("Sentences:\n");
             for (int i = 0; i < sents.size(); i++)
                 user.append('[').append(i + 1).append("] ").append(text.substring(sents.get(i)[0], sents.get(i)[1]).replace('\n', ' ')).append('\n');
@@ -144,9 +171,19 @@ public final class ModelAgent implements Agent {
             });
             raw.add(Tx.m("from", (long) from, "to", (long) to, "sentences", (long) sents.size(), "output", out));
             int proposed = 0, quoted = 0;
+            List<Map<String, Object>> found = new ArrayList<>();
+            for (int[] x : sents)                                             // the rules read what they can for certain, at no model cost
+                for (String[] h : Grounding.harvest(text.substring(x[0], x[1])))
+                    found.add(Tx.m("ident", Arrays.asList("name", h[0]), "a", h[1], "v", h[2], "nu", Policy.PATTERN_NU, "by", "rules",
+                            "quote", Tx.m("start", (long) x[0], "end", (long) x[1], "text", text.substring(x[0], x[1]))));
             for (Map<String, Object> f : parse(out, text, from, to, sents)) {
                 f.put("a", attribute((String) f.get("a")));
-                String key = f.get("ident") + "|" + f.get("a") + "|" + String.valueOf(f.get("v")).toLowerCase(Locale.ROOT);
+                repoint(f, text, sents);
+                found.add(f);
+            }
+            for (Map<String, Object> f : found) {
+                String key = Grounding.concept(String.valueOf(((List<?>) f.get("ident")).get(1))).toLowerCase(Locale.ROOT) + "|" + f.get("a")
+                        + "|" + Grounding.concept(String.valueOf(f.get("v"))).toLowerCase(Locale.ROOT);   // the rules' fact and the model's, once
                 if (!seen.add(key)) continue;
                 facts.add(f);
                 proposed++;
@@ -156,6 +193,31 @@ public final class ModelAgent implements Agent {
         }
         return Tx.m("tools", new ArrayList<Object>(Arrays.asList("read_source")), "facts", facts,
                 "raw", raw, "model", llm.id());
+    }
+
+    /** Headings that start a list of works rather than prose: nothing under them states a fact. */
+    static final java.util.regex.Pattern REFERENCES = java.util.regex.Pattern.compile(
+            "#+\\s*(references|bibliography|works cited|sources|further reading|suggested reading|notes|footnotes|citations)\\b.*",
+            java.util.regex.Pattern.CASE_INSENSITIVE);
+
+    /**
+     * The sentences of a passage worth reading for facts: no headings (they name,
+     * they don't state), and nothing under a References or Bibliography heading,
+     * which the whole text before the passage decides.
+     */
+    static List<int[]> readable(String text, int from, int to) {
+        boolean refs = false;
+        int h = text.lastIndexOf("\n#", from);
+        if (text.startsWith("#") && h < 0) h = -1;
+        String before = h >= 0 ? text.substring(h + 1, Math.max(h + 1, text.indexOf('\n', h + 1) < 0 ? text.length() : text.indexOf('\n', h + 1))) : "";
+        if (!before.isEmpty() && before.charAt(0) == '#') refs = REFERENCES.matcher(before.trim()).matches();
+        List<int[]> out = new ArrayList<>();
+        for (int[] x : sentences(text, from, to)) {
+            String s = text.substring(x[0], x[1]);
+            if (s.startsWith("#")) { refs = REFERENCES.matcher(s.trim()).matches(); continue; }
+            if (!refs) out.add(x);
+        }
+        return out;
     }
 
     /**

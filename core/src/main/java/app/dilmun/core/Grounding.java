@@ -31,6 +31,10 @@ import java.util.regex.Pattern;
  *
  * Plain plurals match ("snake" finds "snakes"). A quote in the pattern agent's
  * "entity | attribute | value" form must name exactly that fact.
+ *
+ * A fact that holds up is then written as concepts ({@link #concept}): "a vast
+ * field of study" becomes field_of_study, so every source that says it lands
+ * on the same key, and support adds up.
  */
 public final class Grounding {
     private Grounding() {}
@@ -45,18 +49,44 @@ public final class Grounding {
             "since", "until", "if", "so", "not", "also", "only", "it", "its", "they", "their", "this", "these", "those",
             "e.g", "i.e", "etc", "via", "per", "whereas", "although", "though", "unless", "whether", "yet", "then");
 
+    /**
+     * Modifiers a concept drops: they grade or frame a thing without changing what
+     * it is ("a vast field of study" is a field of study). A fixed list, so the
+     * same phrase always gives the same concept.
+     */
+    static final Set<String> MODIFIERS = set(
+            "vast", "broad", "wide", "large", "small", "big", "huge", "enormous", "great", "important", "key", "major",
+            "main", "central", "primary", "principal", "basic", "fundamental", "essential", "unique", "distinctive",
+            "particular", "specific", "certain", "various", "different", "diverse", "many", "several", "some", "most",
+            "rich", "complex", "simple", "new", "old", "modern", "true", "real", "whole", "entire", "general", "common",
+            "typical", "special", "significant", "powerful", "fascinating", "interesting", "famous", "well-known",
+            "so-called", "very", "highly", "increasingly", "relatively", "in-depth", "overall", "such", "this", "that",
+            "these", "those", "our", "their", "its", "his", "her", "one", "own");
+
     /** Words that may come between entity and value in "E is a V" and its variants. */
     static final Set<String> LINK = set(
             "is", "are", "was", "were", "be", "being", "been", "a", "an", "the", "one", "of", "type", "types", "kind",
             "kinds", "form", "forms", "sort", "class", "member", "members", "variety", "example", "also", "still",
             "generally", "usually", "often", "commonly", "typically", "mainly", "primarily", "essentially",
             "considered", "regarded", "classified", "known", "called", "termed", "described", "defined", "as",
-            "refers", "refer", "referred", "to", "means", "mean", "denotes", "just",
+            "refers", "refer", "referred", "to", "means", "mean", "denotes", "just", "describe", "describes", "used",
             ",", "(", ":", "—", "–");
+
+    static final Set<String> LINK_MOD = union(LINK, MODIFIERS);
+
+    /** A singular "is" needs one of these before its value, or the value is an adjective: "anthropology is vast". */
+    static final Set<String> NOUN_CUE = set(
+            "a", "an", "the", "one", "type", "kind", "form", "sort", "class", "member", "variety", "example",
+            ",", "(", ":", "—", "–", "called", "termed", "known", "defined", "refers", "means", "denotes", "describe", "describes");
+
+    /** "V is called E", "V known as E", "V, referred to as E": a name given to a thing. */
+    static final Set<String> NAMING = set("called", "known", "referred", "termed", "named", "dubbed");
+    static final Set<String> NAMING_LINK = set("is", "are", "was", "were", "also", "often", "commonly", "usually", "locally",
+            "sometimes", "generally", "called", "known", "referred", "termed", "named", "dubbed", "as", "to", "a", "an", "the", ",");
 
     /** Words that must be among the link words: the quote has to actually say "is", not just list both. */
     static final Set<String> COPULA = set(
-            "is", "are", "was", "were", ",", "(", ":", "—", "–", "called", "termed", "refers", "means", "denotes", "defined");
+            "is", "are", "was", "were", ",", "(", ":", "—", "–", "called", "termed", "refers", "means", "denotes", "defined", "describe", "describes");
 
     /** Between value and entity in "V such as E", "V, including E", "V like E". */
     static final Set<String> LINK_BACK = set("such", "as", "like", "including", "e.g", "for", "example", ",", "(", ":", "especially", "notably");
@@ -64,6 +94,8 @@ public final class Grounding {
 
     private static final Set<String> ARTICLES = set("a", "an", "the");
     private static final Pattern TOKEN = Pattern.compile("[\\p{L}\\p{N}]+(?:['’.\\-][\\p{L}\\p{N}]+)*|[,;:()\\[\\]—–.!?\"“”]");
+    private static final Set<String> DETERMINERS = set("a", "an", "the", "this", "that", "these", "those");
+    private static final Set<String> CALL = set("call", "calls", "called");
 
     private static final Set<String> PRONOUNS = set("it", "they", "this", "these", "its", "their", "he", "she", "such");
 
@@ -88,17 +120,96 @@ public final class Grounding {
             boolean anaphor = !q.isEmpty() && PRONOUNS.contains(q.get(0)) && !find(tokens(before), e).isEmpty();
             if (!anaphor || "is_a".equals(attribute) || "defined_as".equals(attribute)) return "the entity is not in the quote's sentence";
         }
-        boolean complete = false;
-        for (int at : vs) if (endsPhrase(q, at + v.size())) { complete = true; break; }
-        if (!complete) return "the value is cut short: the quote goes on to \"" + q.get(vs.get(0) + v.size()) + "\"";
-        if ("is_a".equals(attribute) || "defined_as".equals(attribute)) {
-            for (int a : es) for (int b : vs) {
-                if (b >= a + e.size() && links(q.subList(a + e.size(), b), LINK, COPULA) && endsPhrase(q, b + v.size())) return null;
-                if ("is_a".equals(attribute) && a >= b + v.size() && links(q.subList(b + v.size(), a), LINK_BACK, CUE_BACK)) return null;
-            }
+        List<String> raw = rawTokens(sentence);
+        boolean relation = "is_a".equals(attribute) || "defined_as".equals(attribute);
+        if (relation) {
+            for (int a : es) for (int b : vs) if (linked(attribute, q, raw, a, e.size(), b, v.size())) return null;
             return "the quote does not say that " + entity.trim() + " " + ("is_a".equals(attribute) ? "is a" : "is defined as") + " " + value.trim();
         }
-        return null;
+        if ("date".equals(attribute)) return null;                 // "the 1992 film": a date is whole on its own
+        for (int at : vs) if (endsPhrase(q, at + v.size())) return null;
+        return "the value is cut short: the quote goes on to \"" + q.get(vs.get(0) + v.size()) + "\"";
+    }
+
+    /** Whether the entity at a and the value at b are linked the way the relation says. */
+    private static boolean linked(String attribute, List<String> q, List<String> raw, int a, int en, int b, int vn) {
+        boolean isA = "is_a".equals(attribute);
+        if (b >= a + en) {                                            // E ... V
+            List<String> between = q.subList(a + en, b);
+            if (links(between, LINK_MOD, COPULA) && endsPhrase(q, b + vn)) {
+                boolean singular = between.contains("is") || between.contains("was");
+                boolean noun = false;
+                for (String t : between) if (NOUN_CUE.contains(t)) noun = true;
+                if (!isA || !singular || noun) return true;         // "anthropology is vast": an adjective, not a kind
+            }
+            // "call this process of acquiring culture enculturation": call V E, with E after V
+        }
+        if (a >= b + vn) {                                            // V ... E
+            List<String> between = q.subList(b + vn, a);
+            if (isA && links(between, LINK_BACK, CUE_BACK)) return true;        // "NSAIDs such as ibuprofen"
+            if (links(between, NAMING_LINK, NAMING)) return true;               // "this practice is called fieldwork"
+            if (!isA && between.size() == 1 && ":".equals(between.get(0))) return true; // "...distinctive cultures: holism"
+            if (between.isEmpty()) {
+                int c = b - 1;
+                while (c >= 0 && (DETERMINERS.contains(q.get(c)) || MODIFIERS.contains(q.get(c)))) c--;
+                if (c >= 0 && CALL.contains(q.get(c))) return true;             // "we call this process ... enculturation"
+                // "the Dutch primatologist Carel van Schaik": a title before a proper name
+                if (isA && a > 0 && proper(raw.get(a)) && !proper(raw.get(a - 1))) return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean proper(String t) {
+        return !t.isEmpty() && Character.isUpperCase(t.charAt(0));
+    }
+
+    /**
+     * The concept a phrase names, as a key: leading articles and grading words
+     * dropped, the head noun made singular, words joined by "_". Proper names
+     * keep their capitals. "a vast field of study" → field_of_study;
+     * "Primates" → primate; "Carel van Schaik" → Carel_van_Schaik.
+     */
+    public static String concept(String phrase) { return concept(phrase, null); }
+
+    /**
+     * context: the sentence the phrase came from, or null. A word counts as a
+     * name when it's an acronym, or when the source capitalizes it mid-sentence
+     * ("in Uganda"); a capital that only starts a sentence ("Primates are") does
+     * not make a name. Without a context, a capital later in the phrase marks a
+     * name ("West African country", "Carel van Schaik").
+     */
+    public static String concept(String phrase, String context) {
+        List<String> ws = new ArrayList<>();
+        for (String t : rawTokens(phrase)) if (Character.isLetterOrDigit(t.charAt(0))) ws.add(t);
+        while (ws.size() > 1 && (ARTICLES.contains(ws.get(0).toLowerCase(Locale.ROOT))
+                || MODIFIERS.contains(ws.get(0).toLowerCase(Locale.ROOT)))) ws.remove(0);
+        if (ws.isEmpty()) return "";
+        Set<String> named = null;
+        if (context != null) {
+            named = new HashSet<>();
+            List<String> ct = rawTokens(context);
+            for (int i = 1; i < ct.size(); i++) {
+                String prev = ct.get(i - 1);
+                boolean starts = ".".equals(prev) || "!".equals(prev) || "?".equals(prev) || "\"".equals(prev) || "“".equals(prev) || ":".equals(prev);
+                if (proper(ct.get(i)) && !starts) named.add(ct.get(i));
+            }
+        }
+        boolean later = false;
+        for (int i = 1; i < ws.size(); i++) if (proper(ws.get(i))) later = true;
+        List<String> out = new ArrayList<>();
+        for (int i = 0; i < ws.size(); i++) {
+            String w = ws.get(i);
+            boolean acronym = w.length() > 1 && Character.isUpperCase(w.charAt(0)) && Character.isUpperCase(w.charAt(1));
+            boolean keep = proper(w) && (acronym || (named != null ? named.contains(w) : i > 0 || later));
+            out.add(keep ? w : w.toLowerCase(Locale.ROOT));
+        }
+        ws = out;
+        int head = ws.indexOf("of") > 0 ? ws.indexOf("of") - 1 : ws.size() - 1;
+        String h = ws.get(head);
+        if (!proper(h)) ws.set(head, stem(h));
+        else if (h.length() > 2 && h.endsWith("s") && Character.isUpperCase(h.charAt(h.length() - 2))) ws.set(head, h.substring(0, h.length() - 1)); // NSAIDs
+        return String.join("_", ws);
     }
 
     /** The pattern agent quotes a whole "entity | attribute | value" line. */
@@ -118,7 +229,7 @@ public final class Grounding {
         if (i >= q.size()) return true;
         String t = q.get(i);
         if (!Character.isLetterOrDigit(t.charAt(0))) return true;
-        return AFTER_VALUE.contains(t) || t.endsWith("ly");
+        return AFTER_VALUE.contains(t) || t.endsWith("ly") || t.endsWith("ing") && t.length() > 5;   // "an anthropologist working for"
     }
 
     private static boolean links(List<String> between, Set<String> allowed, Set<String> needed) {
@@ -145,7 +256,14 @@ public final class Grounding {
 
     static List<String> tokens(String s) {
         List<String> out = new ArrayList<>();
-        Matcher m = TOKEN.matcher(s.toLowerCase(Locale.ROOT));
+        for (String t : rawTokens(s)) out.add(t.toLowerCase(Locale.ROOT));
+        return out;
+    }
+
+    /** Tokens with their case, for telling a name from a word. Underscores join a concept's words. */
+    static List<String> rawTokens(String s) {
+        List<String> out = new ArrayList<>();
+        Matcher m = TOKEN.matcher(s.replace('_', ' '));
         while (m.find()) out.add(m.group().replace('’', '\''));
         return out;
     }
@@ -164,7 +282,11 @@ public final class Grounding {
         return out;
     }
 
+    private static final Set<String> INVARIANT = set("species", "series", "means", "news", "analysis", "basis", "crisis",
+            "thesis", "hypothesis", "diagnosis", "status", "virus", "corpus", "genus", "chaos", "ethos");
+
     static String stem(String w) {
+        if (INVARIANT.contains(w) || w.endsWith("ics")) return w;
         if (w.length() > 4 && w.endsWith("ies")) return w.substring(0, w.length() - 3) + "y";
         if (w.length() > 4 && (w.endsWith("ches") || w.endsWith("shes") || w.endsWith("sses") || w.endsWith("xes")))
             return w.substring(0, w.length() - 2);
@@ -174,4 +296,10 @@ public final class Grounding {
     }
 
     private static Set<String> set(String... s) { return new HashSet<>(Arrays.asList(s)); }
+
+    private static Set<String> union(Set<String> a, Set<String> b) {
+        Set<String> out = new HashSet<>(a);
+        out.addAll(b);
+        return out;
+    }
 }

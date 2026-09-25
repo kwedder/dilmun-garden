@@ -270,8 +270,25 @@ public final class CoreTest {
                 + "biological | is_a | human beings | Biological anthropology is the study of human beings\n"
                 + "biological anthropology | is_a | study of human beings | Biological anthropology is the study of human beings\n"),
                 Policy.SCHEMA_ORDER, null));
-        check(((Number) gr.get("accepted")).longValue() == 1 && gr.toString().contains("cut short") && gr.toString().contains("does not say"),
+        check(((Number) gr.get("accepted")).longValue() == 1 && gr.toString().contains("does not say"),
                 "the arbiters refuse the model's inaccurate facts, with the reason, and keep the accurate one");
+        String kept = gw.e.held().toString();
+        check(kept.contains("biological_anthropology") && kept.contains("study_of_human_beings"), "and write it as concepts: " + kept);
+        check(Grounding.check("anthropology", "is_a", "vast", "anthropology is vast") != null
+                && Grounding.check("anthropology", "is_a", "field of study", "Anthropology is a vast field of study.") == null,
+                "\"anthropology is vast\" is an adjective, not a kind; \"is a vast field of study\" names a field of study");
+        check(Grounding.check("fieldwork", "is_a", "practice", "This practice is called fieldwork.") == null
+                && Grounding.check("orientalism", "is_a", "style", "a style known as orientalism") == null
+                && Grounding.check("enculturation", "defined_as", "process of acquiring our particular culture",
+                        "Anthropologists call this process of acquiring our particular culture enculturation.") == null
+                && Grounding.check("Carel van Schaik", "is_a", "primatologist", "The Dutch primatologist Carel van Schaik spent six years") == null
+                && Grounding.check("anthropology", "is_a", "biological", "Biological anthropology focuses on") != null,
+                "names given backwards count: \"is called E\", \"known as E\", \"call this V E\", \"the primatologist Carel\"");
+        check(Grounding.concept("a vast field of study").equals("field_of_study") && Grounding.concept("Primates").equals("primate")
+                && Grounding.concept("Carel van Schaik").equals("Carel_van_Schaik") && Grounding.concept("West African country").equals("West_African_country")
+                && Grounding.concept("NSAIDs").equals("NSAID") && Grounding.concept("field_of_study").equals("field_of_study")
+                && Grounding.concept("species").equals("species"),
+                "a concept is the same key however a source words it");
 
         section("deny and edit at the gate");
         World dw = new World();

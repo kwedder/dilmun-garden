@@ -3,7 +3,7 @@ name: Extraction check on a real text
 # Runs the real model through the real arbiters over OpenStax "Introduction to
 # Anthropology" (CC BY-NC-SA 4.0, fetched at run time, never stored here) and
 # prints every fact it proposed with the verdict: kept, or refused and why.
-# By hand from the Actions tab, or when this file changes.
+# By hand from the Actions tab, or when this file or the extraction code changes.
 on:
   workflow_dispatch:
     inputs:
@@ -16,6 +16,8 @@ on:
   push:
     paths:
       - .github/workflows/extract-eval.yml
+      - core/src/main/java/app/dilmun/core/Grounding.java
+      - core/src/main/java/app/dilmun/core/ModelAgent.java
 
 permissions:
   contents: read

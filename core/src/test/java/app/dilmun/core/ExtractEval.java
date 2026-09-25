@@ -61,6 +61,11 @@ public final class ExtractEval {
                     System.out.println("RAW " + Json.canon(raw));
             }
         }
+        System.out.println("\nStored, as concepts:");
+        for (Object o : e.held()) {
+            Map<String, Object> h = (Map<String, Object>) o;
+            System.out.println("STORED " + h.get("entity") + " | " + h.get("a") + " | " + h.get("v"));
+        }
         System.out.println(String.format(Locale.ROOT, "\n%d kept, %d refused by grounding, %d refused by the quote/schema checks",
                 kept, grounding, other));
     }

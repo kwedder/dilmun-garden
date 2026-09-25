@@ -334,6 +334,11 @@ public final class Engine {
                 continue;
             }
             String name = ((String) ident.get(1)).trim(), val = ((String) vo).trim();
+            if (((String) q.get("text")).indexOf('|') < 0) {                 // prose: write the fact as concepts
+                String sentence = sentenceOf(text, q);
+                name = Grounding.concept(name, sentence);
+                if (!"date".equals(a) && !"defined_as".equals(a)) val = Grounding.concept(val, sentence);
+            }
             if (i < FACT_NOTES) note("fact", "Kept " + factLine(ident, a, vo), Tx.m("kept", true));
             long nu = no instanceof Number ? Math.max(0, Math.min(1000, ((Number) no).longValue())) : 500L;
             String e = State.identId("name", name);
@@ -375,6 +380,11 @@ public final class Engine {
         int s0 = sentenceStart(text, start), s1 = sentenceEnd(text, end);
         int b0 = s0 > 0 ? sentenceStart(text, s0 - 1) : s0;
         return Grounding.check(entity, a, value, (String) q.get("text"), text.substring(s0, s1), text.substring(b0, s0));
+    }
+
+    private static String sentenceOf(String text, Map<String, Object> q) {
+        int start = ((Number) q.get("start")).intValue(), end = ((Number) q.get("end")).intValue();
+        return text.substring(sentenceStart(text, start), sentenceEnd(text, end));
     }
 
     private static int sentenceStart(String text, int i) {

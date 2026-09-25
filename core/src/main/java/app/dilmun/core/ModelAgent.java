@@ -72,14 +72,16 @@ public final class ModelAgent implements Agent {
                 + "entity | attribute | value | quote\n"
                 + "Use only these attributes: " + String.join(", ", attributes) + ".\n"
                 + "The quote must be copied word for word from the passage: the shortest phrase that states the fact.\n"
-                + "Entity and value are whole names from the passage, never cut short: \"biological anthropology\", not \"biological\"; "
-                + "\"field of study\", not \"vast\". They are never the same thing. Use is_a only where the passage says the entity is a value.\n"
+                + "Entity and value are short concept names joined by _: the thing itself, without words like vast or important. "
+                + "\"biological_anthropology\", not \"biological\"; \"field_of_study\", not \"vast\". They are never the same thing. "
+                + "Use is_a only where the passage says the entity is a value.\n"
                 + "The arbiters check every fact against its quote by rule and refuse any that doesn't hold up.\n"
                 + "Write nothing else. If the passage states none of these facts, write NONE.\n\n"
-                + "Example passage: Ibuprofen, an NSAID, is used to treat pain.\n"
+                + "Example passage: Ibuprofen, an NSAID, is used to treat pain. Ethnobotany is a broad field of research.\n"
                 + "Example output:\n"
                 + "ibuprofen | is_a | NSAID | Ibuprofen, an NSAID\n"
-                + "ibuprofen | treats | pain | is used to treat pain";
+                + "ibuprofen | treats | pain | is used to treat pain\n"
+                + "ethnobotany | is_a | field_of_research | Ethnobotany is a broad field of research";
     }
 
     @Override public Map<String, Object> propose(Map<String, Object> directive, String text) {

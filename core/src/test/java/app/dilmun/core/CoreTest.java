@@ -351,6 +351,10 @@ public final class CoreTest {
             String sj = junk.substring(x[0], x[1]);
             for (String[] h : Grounding.harvest(sj)) if (Grounding.check(h[0], h[1], h[2], sj, sj, "") == null) junkKept.add(h[0] + "|" + h[2]);
         }
+        check(Grounding.check("ethnography", "is_a", "Argonauts of the Western Pacific", "His ethnography, Argonauts of the Western Pacific (1922), describes how") != null
+                && Grounding.check("clothing", "is_a", "cultures", "As with clothing, different cultures come up with solutions.") != null
+                && Grounding.check("ibuprofen", "is_a", "NSAID", "Ibuprofen, an NSAID, is used to treat pain.") == null,
+                "a bare comma isn't \"is a\"; \"E, an V\" still is");
         check(junkKept.isEmpty(), "the rules don't read adjectives, lists, adverbs, phrase tails or \"such as\" on the wrong noun as kinds: " + junkKept);
         List<String[]> hv5 = Grounding.harvest("Nineteenth-century explorers such as Henry M. Stanley described Africa, and from Kinshasa, the capital of the Democratic Republic of the Congo, we drove.");
         check(show(hv5).contains("[\"Henry M. Stanley\",\"is_a\",\"Nineteenth-century explorers\"]") && show(hv5).contains("capital of the Democratic Republic of the Congo")

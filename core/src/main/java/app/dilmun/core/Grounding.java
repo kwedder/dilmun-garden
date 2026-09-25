@@ -294,7 +294,12 @@ public final class Grounding {
             List<String> between = q.subList(a + en, b);
             boolean defines = false;                                  // "freedom, equal opportunity" is a list, not a definition
             for (String t : between) if (DEFINES.contains(t)) defines = true;
-            if (links(between, LINK_MOD, COPULA) && endsPhrase(q, b + vn) && (isA || defines)) {
+            // a bare comma isn't "is a": "His ethnography, Argonauts of…" or "As with clothing, different cultures…"
+            boolean appositive = !between.isEmpty() && (",".equals(between.get(0)) || "(".equals(between.get(0)));
+            boolean named = false;
+            for (String t : between) if (!",".equals(t) && !"(".equals(t) && !MODIFIERS.contains(t)) named = true;
+            if (appositive && !named) { /* no article or verb after the comma: not a statement of kind */ }
+            else if (links(between, LINK_MOD, COPULA) && endsPhrase(q, b + vn) && (isA || defines)) {
                 boolean singular = between.contains("is") || between.contains("was");
                 boolean noun = false;
                 for (String t : between) if (NOUN_CUE.contains(t)) noun = true;

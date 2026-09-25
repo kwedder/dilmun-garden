@@ -1,0 +1,36 @@
+{
+  "about": "Sentence pairs for testing a verifier model: does it tell when two sentences state the same thing? Written for this test. 'same' pairs say one thing in different words; 'different' pairs share a topic but state different, narrower, broader or opposite things.",
+  "pairs": [
+    {"label": "same", "about": ["anthropology", "humanity"], "a": "Anthropology is the study of humanity across time and space.", "b": "Across all times and places, anthropology studies human beings."},
+    {"label": "same", "about": ["holism"], "a": "Holism is the idea that the parts of a society, such as its economy and religion, are connected.", "b": "Anthropologists use the word holism for the way a society's economy, religion and other parts are linked."},
+    {"label": "same", "about": ["aspirin", "fever"], "a": "Aspirin is used to reduce fever.", "b": "Fever can be brought down with aspirin."},
+    {"label": "same", "about": ["fieldwork"], "a": "Fieldwork means living for months among the people being studied.", "b": "In fieldwork, the researcher spends many months living with the community under study."},
+    {"label": "same", "about": ["kula ring", "exchange"], "a": "The kula ring was a system for exchanging shell bracelets and necklaces between islands.", "b": "Islanders traded shell necklaces and bracelets with one another in an exchange system called the kula ring."},
+    {"label": "same", "about": ["skin color", "sunlight"], "a": "Lighter skin evolved in regions with weaker sunlight.", "b": "In places with less intense sunlight, human skin became lighter over time."},
+    {"label": "same", "about": ["ethnocentrism"], "a": "Ethnocentrism is the belief that one's own culture is better than all others.", "b": "Believing your own culture superior to every other culture is called ethnocentrism."},
+    {"label": "same", "about": ["drought", "Chaco"], "a": "A long drought forced the people of Chaco Canyon to leave.", "b": "The people of Chaco Canyon abandoned it because of a long drought."},
+    {"label": "same", "about": ["archaeologists", "artifacts"], "a": "Archaeologists study artifacts to learn how people lived in the past.", "b": "By examining objects people made, archaeologists learn about past ways of life."},
+    {"label": "same", "about": ["penicillin", "bacteria"], "a": "Penicillin kills many kinds of bacteria.", "b": "Many bacteria are killed by penicillin."},
+    {"label": "same", "about": ["water", "boiling"], "a": "At sea level, water boils at 100 degrees Celsius.", "b": "Water reaches its boiling point at 100 degrees Celsius when at sea level."},
+    {"label": "same", "about": ["enculturation"], "a": "Enculturation is the process of learning one's own culture.", "b": "The process by which people acquire their culture is called enculturation."},
+
+    {"label": "different", "about": ["anthropology", "humanity"], "a": "Anthropology is the study of humanity across time and space.", "b": "Anthropology began as a discipline in the nineteenth century."},
+    {"label": "different", "about": ["holism"], "a": "Holism is the idea that the parts of a society are connected.", "b": "Holism is not the same as harmony."},
+    {"label": "different", "about": ["aspirin", "fever"], "a": "Aspirin is used to reduce fever.", "b": "Aspirin can cause stomach bleeding in some patients with fever."},
+    {"label": "different", "about": ["aspirin"], "a": "Aspirin reduces the risk of blood clots.", "b": "Aspirin increases the risk of blood clots."},
+    {"label": "different", "about": ["fieldwork"], "a": "Fieldwork means living for months among the people being studied.", "b": "Fieldwork was pioneered by Bronislaw Malinowski in the Trobriand Islands."},
+    {"label": "different", "about": ["kula ring"], "a": "The kula ring was a system for exchanging shell bracelets and necklaces between islands.", "b": "The kula ring replaced warfare between island groups."},
+    {"label": "different", "about": ["skin color", "sunlight"], "a": "Lighter skin evolved in regions with weaker sunlight.", "b": "Darker skin protected early humans from strong ultraviolet light in Africa."},
+    {"label": "different", "about": ["ethnocentrism"], "a": "Ethnocentrism is the belief that one's own culture is better than all others.", "b": "Ethnocentrism has been used to justify colonial violence."},
+    {"label": "different", "about": ["Chaco"], "a": "A long drought forced the people of Chaco Canyon to leave.", "b": "Buildings at Chaco Canyon were aligned with the sun and moon."},
+    {"label": "different", "about": ["archaeologists"], "a": "Archaeologists study artifacts to learn how people lived in the past.", "b": "Archaeologists excavated a set of sites in northern Peru for seven years."},
+    {"label": "different", "about": ["penicillin"], "a": "Penicillin kills many kinds of bacteria.", "b": "Penicillin has no effect on viruses."},
+    {"label": "different", "about": ["water"], "a": "At sea level, water boils at 100 degrees Celsius.", "b": "On a high mountain, water boils below 100 degrees Celsius."},
+    {"label": "different", "about": ["enculturation"], "a": "Enculturation is the process of learning one's own culture.", "b": "Enculturation makes people value the knowledge of their own culture."},
+    {"label": "different", "about": ["men", "women", "farming"], "a": "In many farming societies, men clear the land and women plant the crops.", "b": "In many farming societies, women clear the land and men plant the crops."},
+    {"label": "different", "about": ["race"], "a": "Race does not exist in biology.", "b": "Race exists in social institutions."},
+    {"label": "different", "about": ["primates", "snakes"], "a": "Primates evolved sharp vision to spot snakes.", "b": "Humans and primates share a fear of snakes."},
+    {"label": "different", "about": ["orangutans"], "a": "Orangutans are more social than previously thought.", "b": "Orangutans are threatened by habitat loss and the pet trade."},
+    {"label": "different", "about": ["smartphones"], "a": "In Ireland, smartphones become a personal avatar for their users.", "b": "Smartphones are used in Brazil, Cameroon, Chile and China."}
+  ]
+}

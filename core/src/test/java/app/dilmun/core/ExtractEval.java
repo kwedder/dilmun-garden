@@ -45,7 +45,8 @@ public final class ExtractEval {
                 System.out.println("\n" + s.get("name"));
                 List<String> notes = e.notes(m.id());
                 if (!notes.isEmpty()) System.out.println("  arbiters' notes: " + notes);
-                Map<String, Object> r = e.extract((String) s.get("id"), src, agent.briefed(notes));
+                boolean rulesOnly = "rules".equals(System.getProperty("dilmun.extract"));   // skip the model's extraction: claims come from the arbiters anyway
+                Map<String, Object> r = e.extract((String) s.get("id"), src, rulesOnly ? new Agent.PatternAgent() : agent.briefed(notes));
                 Map<String, Object> p = (Map<String, Object>) Tx.payload(e.store().get((String) r.get("tx"))).get("proposal");
                 List<Object> facts = (List<Object>) p.get("facts");
                 String[] why = new String[facts.size()];
@@ -61,8 +62,9 @@ public final class ExtractEval {
                             "a", f.get("a"), "v", f.get("v"), "quote", ((Map<String, Object>) f.get("quote")).get("text"),
                             "verdict", verdict, "reason", why[i], "by", f.containsKey("by") ? f.get("by") : "model")));
                 }
-                for (Object raw : (List<Object>) p.get("raw"))
-                    System.out.println("RAW " + Json.canon(raw));
+                if (p.get("raw") instanceof List)
+                    for (Object raw : (List<Object>) p.get("raw"))
+                        System.out.println("RAW " + Json.canon(raw));
             }
             // the arbiters go through the claims and delegate yes/no checks to the same model
             System.out.println("\nClaims written: " + e.summary().get("claims"));

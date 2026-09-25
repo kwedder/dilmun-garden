@@ -369,7 +369,7 @@
       a.facts.forEach((f, i) => {
         const held = f.status === "held";
         if (f.kind === "claim") {
-          box.appendChild(el("div", held ? "held" : null, "[" + (i + 1) + "] “" + f.text + "” · " + (held ? "unconfirmed, " : "") + plural(f.support, "source", "sources")));
+          box.appendChild(el("div", held ? "held" : null, "[" + (i + 1) + "] " + (f.frame ? f.frame + ": " : "") + "“" + f.text + "” · " + (held ? "unconfirmed, " : "") + plural(f.support, "source", "sources")));
           return;
         }
         const how = held ? "unconfirmed, " + plural(f.support, "source", "sources") : f.support >= 2 ? plural(f.support, "source", "sources") : "approved";
@@ -646,6 +646,24 @@
       held.appendChild(row);
     });
 
+    const qu = $("queue-list"); qu.innerHTML = "";
+    const qs = ok(call("queue"), true) || [];
+    $("queue-head").hidden = !qs.length;
+    qs.forEach(q => {
+      const row = li(), main = el("div", "main");
+      main.appendChild(el("div", "t", q.kind === "quarantined" ? "“" + q.text + "”" : q.text));
+      main.appendChild(el("div", "why", (q.kind === "contested" ? "Contested: " : "Quarantined: ") + q.why));
+      row.appendChild(main);
+      const acts = el("div", "row tight");
+      const yes = el("button", "small", "Approve"), no = el("button", "small", "Deny");
+      yes.addEventListener("click", () => { if (ok(call("approve", q.key)) !== undefined) { toast("Approved and signed"); refresh(); } });
+      no.addEventListener("click", () => { if (ok(call("deny", q.key)) !== undefined) { toast("Denied and signed"); refresh(); } });
+      acts.appendChild(yes); acts.appendChild(no);
+      row.appendChild(acts);
+      row.classList.add("fact");
+      qu.appendChild(row);
+    });
+
     const dn = $("denied-list"); dn.innerHTML = "";
     const dns = ok(call("denied")) || [];
     $("denied-head").hidden = !dns.length;
@@ -728,6 +746,13 @@
     const n = ok(call("reconcile"));
     if (n !== undefined) { toast(n ? plural(n, "directive", "directives") + " expired" : "Nothing stale"); refresh(); }
   });
+  /* Maintenance: what the dream cycle will do while the phone charges, run by hand for now. */
+  $("btn-maintain").addEventListener("click", () => {
+    const r = ok(call("maintain"));
+    if (r !== undefined) { toast("Re-checked " + plural(r.checked, "settled item", "settled items") + " against today's rules · "
+      + (r.newly_contested ? plural(r.newly_contested, "newly contested", "newly contested") : "nothing new to contest")); refresh(); }
+  });
+
   /* The arbiters go through the held claims and delegate yes/no checks to the loaded model. */
   $("btn-review").addEventListener("click", () => {
     const b = $("btn-review");
@@ -787,6 +812,7 @@
       main.appendChild(t);
       row.appendChild(main);
       row.appendChild(el("span", "badge" + (r.support < k ? " appr" : ""), r.edited ? "edited" : r.support < k ? "approved" : plural(r.support, "source", "sources")));
+      if (r.layer === "archive") row.appendChild(el("span", "badge", "archive"));
       const acts = el("div", "row tight");
       factActions(acts, row, r);
       row.appendChild(acts);

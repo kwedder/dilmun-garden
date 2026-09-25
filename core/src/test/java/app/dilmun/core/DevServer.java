@@ -179,6 +179,8 @@ public final class DevServer {
             case "held": return engine.held();
             case "denied": return engine.denied();
             case "claims": return engine.claims((String) a.get(0));
+            case "queue": return engine.stewardQueue();
+            case "maintain": return engine.maintain();
             case "review": {
                 if (llama == null) throw new Store.Rejected("load the model first");
                 final Llama l = llama;

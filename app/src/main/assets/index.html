@@ -160,12 +160,15 @@
               <div class="meta">Deny a fact and the gate never promotes it, however many sources agree. Edit one to settle your version instead.</div>
             </div>
             <div class="row tight">
+              <button id="btn-maintain" class="small">Maintain memory</button>
               <button id="btn-review" class="small">Check claims</button>
               <button id="btn-gate" class="primary">Run the gate</button>
             </div>
           </div>
           <div class="sub">Held</div>
           <ul id="held-list" class="list"></ul>
+          <div id="queue-head" class="sub" hidden>Needs you</div>
+          <ul id="queue-list" class="list"></ul>
           <div id="denied-head" class="sub" hidden>Denied</div>
           <ul id="denied-list" class="list"></ul>
         </div>

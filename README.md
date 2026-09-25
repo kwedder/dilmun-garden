@@ -141,6 +141,17 @@ Asked a question, the model gets the matching claims beside the facts, as the so
 
 At the gate you can **Approve**, **Edit** or **Deny** any held fact, and Edit or Deny any settled one. A denied fact is never promoted, however many sources agree. An edited fact is settled as you wrote it, with the original's quote. Both are signed with your key.
 
+### Safeguards: what can go wrong with a memory built like a brain
+
+A memory that settles what several sources repeat, and fades what nobody repeats, has the brain's failure modes too: false consensus, silent overwriting, forgetting and suggestibility. The arbiters guard against each:
+
+- **Copied sources count once (lineages).** "Two sources" means two *independent* sources. Each source is fingerprinted by sampling hashes of its 8-word runs; two sources sharing enough of them are one lineage, so notes copied from a textbook can't confirm the textbook. Each claim also keeps its **frame**, the heading it appeared under.
+- **Contradictions are held, not overwritten.** For a relation with one value (like `date`), a new value against a settled one is held and marked **contested**, and so are two different values ready at the same time. Nothing is replaced silently. Contested items go to the **Needs you** queue on the Work tab; asked a question, the model is told to give both sides.
+- **Maintenance (re-grounding).** **Maintain** on the Work tab re-checks every settled fact and claim against today's rules and its own quote. What no longer holds is signed into the log as a `contest` and leaves recall until you decide. The log keeps everything, so this is reversible.
+- **Canon and archive, not deletion.** A settled fact's strength fades with a half-life of a year, slower the more sources it has. Weak facts move to the **archive**: never deleted, still shown in Memory with a badge, and recall keeps one slot for the best archive match, so old knowledge still surfaces.
+- **Injected instructions are quarantined.** A sentence that speaks to an AI ("ignore previous instructions", "you must…", "tell the user…") gives no facts, and its claim is quarantined until you approve it. Everything the model reads from memory is fenced as quoted data, not instructions.
+- **What the source said is kept.** When a fact is stored under a concept name (`field_of_study`), its original words are kept beside it, so every change from source to memory can be checked. A fact with no quote isn't promoted.
+
 ## What's inside
 
 ```

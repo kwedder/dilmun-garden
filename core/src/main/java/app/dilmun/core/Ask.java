@@ -19,7 +19,8 @@ public final class Ask {
         if ("claim".equals(f.get("kind"))) {
             long sup = f.get("support") instanceof Number ? ((Number) f.get("support")).longValue() : 1;
             String how = "settled".equals(f.get("status")) ? plural(sup) : "unconfirmed: " + plural(sup) + ", not yet through the gate";
-            return "[" + n + "] the source says: \"" + f.get("text") + "\" (" + how + ")";
+            String in = f.get("frame") != null ? " (under \"" + f.get("frame") + "\")" : "";
+            return "[" + n + "] the source says" + in + ": \"" + f.get("text") + "\" (" + how + ")";
         }
         long support = f.get("support") instanceof Number ? ((Number) f.get("support")).longValue() : 1;
         boolean held = "held".equals(f.get("status"));
@@ -28,7 +29,8 @@ public final class Ask {
         Object q = f.get("quote");
         String quote = q instanceof String && !((String) q).isEmpty() ? " (source says: \"" + q + "\")" : "";
         return "[" + n + "] " + f.get("entity") + " " + String.valueOf(f.get("a")).replace('_', ' ') + " " + f.get("v")
-                + " (" + how + ")" + quote;
+                + " (" + how + (f.get("contested") != null ? "; contested: " + f.get("contested") : "")
+                + ("archive".equals(f.get("layer")) ? "; from the archive: its sources are old" : "") + ")" + quote;
     }
 
     /** The arbiters' reading briefing: how the store is laid out, then the facts. */

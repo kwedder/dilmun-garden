@@ -329,6 +329,8 @@ public final class Engine {
                 reason = "the fact is incomplete";
             else if ((reason = ground((String) ident.get(1), a, (String) vo, text, q)) != null
                     && (fixed = repair((String) ident.get(1), a, (String) vo, text, q)) != null) reason = null;
+            if (reason == null && ((String) q.get("text")).indexOf('|') < 0 && Grounding.addressesAi(sentenceOf(text, q)))
+                reason = "the sentence addresses an AI: kept out of memory";
             if (reason == null && accepted >= budget) reason = "over budget";      // a repaired fact counts too
             if (reason != null) {
                 rejected.add(Tx.m("i", (long) i, "a", a, "reason", reason));
@@ -338,6 +340,7 @@ public final class Engine {
             }
             String name = ((String) ident.get(1)).trim(), val = ((String) vo).trim();
             if (fixed != null) { name = fixed[0]; val = fixed[1]; }
+            Map<String, Object> said = Tx.m("e", name, "v", val);           // as written, before it became a concept
             if (((String) q.get("text")).indexOf('|') < 0) {                 // prose: write the fact as concepts
                 String sentence = sentenceOf(text, q);
                 name = Grounding.concept(name, sentence);
@@ -351,7 +354,9 @@ public final class Engine {
             boolean ref = Boolean.TRUE.equals(st.schema.get(a).get("ref"));
             if (ref) v = Tx.m("ref", State.identId("name", val));
             long vf = nextHlc()[0];
-            datoms.add(datom("d:" + Crypto.H(Arrays.asList(nonce, (long) i)).substring(0, 24), e, a, v, nu, vf, q));
+            Map<String, Object> fd = datom("d:" + Crypto.H(Arrays.asList(nonce, (long) i)).substring(0, 24), e, a, v, nu, vf, q);
+            if (!said.get("e").equals(name) || !said.get("v").equals(val)) fd.put("said", said);   // the transform, for audit
+            datoms.add(fd);
             datoms.add(datom("d:" + Crypto.H(Arrays.asList(nonce, (long) i, "name")).substring(0, 24), e, "name", name, 1000L, vf, q));
             if (ref) {                                                   // the value is an entity too
                 datoms.add(datom("d:" + Crypto.H(Arrays.asList(nonce, (long) i, "vname")).substring(0, 24),
@@ -367,7 +372,8 @@ public final class Engine {
         note("claims", "Arbiters wrote " + plural(claims.size(), "claim", "claims") + " from the source's sentences",
                 Tx.m("claims", (long) claims.size()));
         Map<String, Object> tx = commit(portalKey, portal, "assert", "episode:" + did,
-                Tx.m("proposal", proposal, "datoms", datoms, "rejected", rejected, "claims", claims),
+                Tx.m("proposal", proposal, "datoms", datoms, "rejected", rejected, "claims", claims,
+                        "lineage", new ArrayList<Object>(Grounding.lineage(text))),
                 Tx.m("directive", did, "agent", with.id(), "skill", skill, "skill_version", version,
                         "skill_current", st.skills.get(skill).lastKey(), "model_hash", with.id(),
                         "source", source, "source_hash", d.get("source_hash")));
@@ -387,10 +393,24 @@ public final class Engine {
             if (!Grounding.isClaim(s)) continue;
             String id = Grounding.claimId(s);
             if (!seen.add(id)) continue;
-            out.add(Tx.m("id", id, "text", s, "start", (long) x[0], "end", (long) x[1],
-                    "concepts", new ArrayList<Object>(Grounding.claimConcepts(s))));
+            Map<String, Object> c = Tx.m("id", id, "text", s, "start", (long) x[0], "end", (long) x[1],
+                    "concepts", new ArrayList<Object>(Grounding.claimConcepts(s)));
+            String frame = frameOf(text, x[0]);
+            if (frame != null) c.put("frame", frame);
+            if (Grounding.addressesAi(s)) c.put("quarantined", true);
+            out.add(c);
         }
         return out;
+    }
+
+    /** The heading a sentence sits under, its frame: "in Ghana" facts stay in Ghana. */
+    static String frameOf(String text, int at) {
+        int h = text.lastIndexOf("\n#", at);
+        int start = h >= 0 ? h + 1 : text.startsWith("#") && at > 0 ? 0 : -1;
+        if (start < 0) return null;
+        int end = text.indexOf('\n', start);
+        String t = text.substring(start, end < 0 ? text.length() : end).replaceAll("^#+\\s*", "").trim();
+        return t.isEmpty() || ModelAgent.REFERENCES.matcher("# " + t).matches() ? null : t;
     }
 
     /** Facts checked one by one in the trace; the rest are summed up, so a big result can't flood it. */
@@ -483,18 +503,30 @@ public final class Engine {
         Map<String, String> names = st.names();
         List<Object[]> scored = new ArrayList<>();
         Set<String> seen = new HashSet<>();
+        TreeMap<String, List<Map<String, Object>>> episodes = groupEpisodes(st);
+        Map<String, String> contested = contestedNow(st, episodes);
+        long now = nextHlc()[0];
+        Object[] bestArchive = null;
         for (Map<String, Object> d : st.tier("culture")) {
             if ("name".equals(d.get("a"))) continue;
             String e = st.find((String) d.get("e"));
             String ent = names.containsKey(e) ? names.get(e) : e, val = display(st, names, d.get("v"));
             if (!seen.add(Json.canon(Arrays.asList(ent.toLowerCase(Locale.ROOT), d.get("a"), val.toLowerCase(Locale.ROOT))))) continue;
-            Map<String, Object> row = recallRow(ent, d, val, ((Number) d.get("support")).longValue(), "settled", quoteOf(d));
+            String key = st.factKey("culture", d);
+            long support = ((Number) d.get("support")).longValue();
+            double strength = strength(latestEvidence(st, key, d, episodes.get(key)), support, now);
+            Map<String, Object> row = recallRow(ent, d, val, support, "settled", quoteOf(d));
+            row.put("layer", strength >= CANON ? "canon" : "archive");
+            if (contested.containsKey(key)) row.put("contested", contested.get(key));
             double score = score(words, row);
-            if (score > 0) scored.add(new Object[]{score + 0.5, row});
+            if (score <= 0) continue;
+            Object[] x = new Object[]{(score + 0.5) * (0.5 + 0.5 * strength), row};
+            if (strength >= CANON) scored.add(x);
+            else if (bestArchive == null || (Double) x[0] > (Double) bestArchive[0]) bestArchive = x;   // the archive waits for its slot
         }
         Set<String> promoted = new HashSet<>();
         for (Map<String, Object> d : st.tier("culture")) promoted.add(st.factKey("culture", d));
-        for (Map.Entry<String, List<Map<String, Object>>> g : groupEpisodes(st).entrySet()) {
+        for (Map.Entry<String, List<Map<String, Object>>> g : episodes.entrySet()) {
             Map<String, Object> d = g.getValue().get(0);
             if ("name".equals(d.get("a")) || promoted.contains(g.getKey()) || st.denied(g.getKey())) continue;
             String e = st.find((String) d.get("e"));
@@ -509,20 +541,27 @@ public final class Engine {
                 if (hits > bestHits) { bestHits = hits; best = quoteOf(x); }
             }
             Map<String, Object> row = recallRow(ent, d, val, distinctSources(g.getValue()), "held", best);
+            if (contested.containsKey(g.getKey())) row.put("contested", contested.get(g.getKey()));
             double score = score(words, row);
             if (score > 0) scored.add(new Object[]{score, row});
         }
         Collections.sort(scored, (x, y) -> Double.compare((Double) y[0], (Double) x[0]));
         List<Object> out = new ArrayList<>();
         long settled = 0, held = 0;
+        // Interleaving: one slot goes to the best-matching archive item, so old knowledge that has
+        // faded from the canon still comes back when it's what the question is about.
+        int room = bestArchive != null && limit > 1 ? limit - 1 : limit;
         for (Object[] x : scored) {
-            if (out.size() >= limit) break;
+            if (out.size() >= room) break;
             out.add(x[1]);
             if ("settled".equals(castMap(x[1]).get("status"))) settled++; else held++;
         }
+        if (bestArchive != null) { out.add(bestArchive[1]); settled++; }
         List<Object[]> cs = new ArrayList<>();                         // then the claims about the question's concepts
         for (Map.Entry<String, Map<String, Object>> e : st.claims.entrySet()) {
             if (st.denied(e.getKey())) continue;
+            if (Boolean.TRUE.equals(e.getValue().get("quarantined")) && !st.approved(e.getKey())) continue;   // addresses an AI: not until approved
+            if (st.contestedBy(e.getKey()) != null) continue;
             Set<String> cw = words(String.valueOf(e.getValue().get("text")));
             double sc = 0;
             for (String w : words) if (cw.contains(w)) sc += 1;
@@ -535,14 +574,21 @@ public final class Engine {
             if (claimsIn >= RECALL_CLAIMS) break;
             String id = (String) x[1];
             boolean ok = st.settledClaims.containsKey(id);
-            out.add(Tx.m("kind", "claim", "key", id, "text", st.claims.get(id).get("text"), "status", ok ? "settled" : "held",
-                    "support", (long) st.claimSupport(id).size(), "quote", ""));
+            Map<String, Object> row = Tx.m("kind", "claim", "key", id, "text", st.claims.get(id).get("text"), "status", ok ? "settled" : "held",
+                    "support", (long) st.claimSupport(id).size(), "quote", "");
+            if (st.claims.get(id).get("frame") != null) row.put("frame", st.claims.get(id).get("frame"));
+            out.add(row);
             claimsIn++;
         }
         note("recall", "Ask read memory: " + plural(settled, "settled fact", "settled facts") + ", "
                         + plural(held, "unconfirmed fact", "unconfirmed facts") + " and " + plural(claimsIn, "claim", "claims") + " match the question",
                 Tx.m("settled", settled, "held", held, "claims", claimsIn));
         return out;
+    }
+
+    /** Contested keys, from the state already read (recall holds the lock). */
+    private Map<String, String> contestedNow(State st, TreeMap<String, List<Map<String, Object>>> episodes) {
+        return contested();
     }
 
     /** Claims given to Ask beside the facts, at most. */
@@ -630,6 +676,16 @@ public final class Engine {
         Set<String> promoted = new HashSet<>();
         for (Map<String, Object> d : st.tier("culture")) promoted.add(st.factKey("culture", d));
         TreeMap<String, List<Map<String, Object>>> groups = groupEpisodes(st);
+        // Values of one-value attributes (a date, a definition) ready to settle together: if two
+        // different ones are ready at once, neither settles on its own; the steward decides.
+        Map<String, Set<String>> readyValues = new HashMap<>();
+        for (Map.Entry<String, List<Map<String, Object>>> g : groups.entrySet()) {
+            Map<String, Object> d = g.getValue().get(0);
+            Map<String, Object> att = st.schema.get(d.get("a"));
+            if (att == null || !"one".equals(att.get("card")) || "name".equals(d.get("a")) || promoted.contains(g.getKey()) || st.denied(g.getKey())) continue;
+            if (distinctSources(g.getValue()) >= Policy.GATE_K || st.approved(g.getKey()))
+                readyValues.computeIfAbsent(st.find((String) d.get("e")) + "|" + d.get("a"), x -> new TreeSet<>()).add(Json.canon(d.get("v")));
+        }
         long n = 0;
         for (Map.Entry<String, List<Map<String, Object>>> g : groups.entrySet()) {
             String key = g.getKey();
@@ -651,7 +707,12 @@ public final class Engine {
             Map<String, Object> rep = ds.get(0);
             for (Map<String, Object> d : ds) if (((String) d.get("id")).compareTo((String) rep.get("id")) < 0) rep = d;
             Map<String, Object> copy = new TreeMap<>();
-            for (String f : Arrays.asList("e", "a", "v", "ctx", "nu", "vf", "vt", "quote")) copy.put(f, rep.get(f));
+            if (quoteOf(rep).isEmpty()) { note("hold", "Gate: held a fact with no quote to cite", Tx.m("key", key)); continue; }
+            String conflict = conflictFor(state(), rep);              // a new value against a settled one: the steward decides
+            Set<String> together = readyValues.get(st.find((String) rep.get("e")) + "|" + rep.get("a"));
+            if (conflict == null && together != null && together.size() > 1) conflict = "sources disagree: another value is ready at the same time";
+            if (conflict != null && !approved) { note("hold", "Gate: held " + factText(st, rep) + " · " + conflict, Tx.m("key", key)); continue; }
+            for (String f : Arrays.asList("e", "a", "v", "ctx", "nu", "vf", "vt", "quote", "said")) if (rep.get(f) != null || !"said".equals(f)) copy.put(f, rep.get(f));
             copy.put("id", "d:" + Crypto.H(Arrays.asList("promote", rep.get("id"), store.tip(portal))).substring(0, 24));
             copy.put("origin", rep.get("id"));
             copy.put("origin_tx", rep.get("tx"));
@@ -682,6 +743,7 @@ public final class Engine {
         for (Map.Entry<String, Map<String, Object>> e : st.claims.entrySet()) {
             String id = e.getKey();
             if (st.settledClaims.containsKey(id) || st.denied(id)) continue;
+            if (Boolean.TRUE.equals(e.getValue().get("quarantined")) && !st.approved(id)) continue;   // addresses an AI
             Set<String> support = st.claimSupport(id);
             boolean approved = st.approved(id);
             if (support.size() < Policy.GATE_K && !approved) continue;
@@ -763,10 +825,132 @@ public final class Engine {
         return groups;
     }
 
-    private static long distinctSources(List<Map<String, Object>> ds) {
+    /** Independent lineages among the sources: files that copy one another count once (see State.lineage). */
+    private long distinctSources(List<Map<String, Object>> ds) {
+        State st = state();
         Set<Object> s = new HashSet<>();
-        for (Map<String, Object> d : ds) s.add(d.get("source"));
+        for (Map<String, Object> d : ds) s.add(st.lineage(String.valueOf(d.get("source"))));
         return s.size();
+    }
+
+    /**
+     * Why a fact conflicts with memory, or null: an attribute that holds one value
+     * (defined_as, date) already settled with a different one. A contradiction is
+     * where a brain rewrites a memory on recall; here it opens a review instead.
+     */
+    private static String conflictFor(State st, Map<String, Object> d) {
+        Map<String, Object> att = st.schema.get(d.get("a"));
+        if (att == null || !"one".equals(att.get("card")) || "name".equals(d.get("a"))) return null;
+        String e = st.find((String) d.get("e"));
+        for (Map<String, Object> c : st.tier("culture"))
+            if (d.get("a").equals(c.get("a")) && e.equals(st.find((String) c.get("e"))) && !Json.canon(c.get("v")).equals(Json.canon(d.get("v"))))
+                return "sources disagree: " + d.get("a") + " is already settled as " + display(st, st.names(), c.get("v"));
+        return null;
+    }
+
+    /**
+     * What's contested, and why: a one-value attribute with different values in
+     * memory (settled, or held against a settled one), or an item maintenance
+     * found failing today's rules. Computed from the log, so every portal agrees.
+     */
+    public synchronized Map<String, String> contested() {
+        State st = state();
+        Map<String, String> out = new TreeMap<>();
+        for (String k : st.contests.keySet()) { String r = st.contestedBy(k); if (r != null && !st.denied(k)) out.put(k, r); }
+        Map<String, List<Map<String, Object>>> byEa = new TreeMap<>();
+        List<Map<String, Object>> all = new ArrayList<>(st.tier("culture"));
+        for (List<Map<String, Object>> g : groupEpisodes(st).values()) all.add(g.get(0));
+        for (Map<String, Object> d : all) {
+            Map<String, Object> att = st.schema.get(d.get("a"));
+            if (att == null || !"one".equals(att.get("card")) || "name".equals(d.get("a"))) continue;
+            String key = st.factKey("culture", d);
+            if (st.denied(key)) continue;
+            byEa.computeIfAbsent(st.find((String) d.get("e")) + "|" + d.get("a"), x -> new ArrayList<>()).add(d);
+        }
+        for (List<Map<String, Object>> g : byEa.values()) {
+            Set<String> vals = new TreeSet<>();
+            for (Map<String, Object> d : g) vals.add(Json.canon(d.get("v")));
+            if (vals.size() < 2) continue;
+            for (Map<String, Object> d : g) out.put(st.factKey("culture", d), "sources disagree about its " + String.valueOf(d.get("a")).replace('_', ' '));
+        }
+        return out;
+    }
+
+    // ------------------------------------------------------------ maintenance (the dream cycle's work, without dreaming)
+
+    /**
+     * What the dream cycle does while the phone charges: replay, not invention.
+     * The arbiters re-check every settled fact and claim against today's rules
+     * (they improve; what they settled last month was checked by older ones) and
+     * contest what no longer holds up, for the steward to confirm or deny. Nothing
+     * is deleted, nothing new is made up: a dream that invents facts is how a
+     * brain gets a false memory.
+     */
+    public synchronized Map<String, Object> maintain() {
+        return request("maintain memory", false, () -> {
+            live();
+            State st = state();
+            notPaused(st);
+            List<Object> items = new ArrayList<>();
+            Set<String> seen = new HashSet<>();
+            for (Map<String, Object> d : st.tier("culture")) {
+                if ("name".equals(d.get("a")) || Boolean.TRUE.equals(d.get("edited"))) continue;
+                String key = st.factKey("culture", d);
+                if (!seen.add(key) || st.contests.containsKey(key) || st.approved(key)) continue;
+                String quote = quoteOf(d);
+                if (quote.isEmpty()) { items.add(Tx.m("key", key, "reason", "no quote to cite", "rule", "regrounding")); continue; }
+                Map<?, ?> said = d.get("said") instanceof Map ? (Map<?, ?>) d.get("said") : null;
+                Map<String, String> names = st.names();
+                String e = said != null ? String.valueOf(said.get("e")) : names.getOrDefault(st.find((String) d.get("e")), (String) d.get("e"));
+                String v = said != null ? String.valueOf(said.get("v")) : display(st, names, d.get("v"));
+                String why = Grounding.check(e, (String) d.get("a"), v, quote, quote, "");
+                if (why == null && quote.indexOf('|') < 0 && Grounding.addressesAi(quote)) why = "the sentence addresses an AI";
+                if (why != null && Grounding.repair(e, (String) d.get("a"), v, quote, quote, "") == null)
+                    items.add(Tx.m("key", key, "reason", "no longer holds up: " + why, "rule", "regrounding"));
+            }
+            for (Map.Entry<String, Map<String, Object>> c : st.settledClaims.entrySet()) {
+                String key = c.getKey();
+                if (st.contests.containsKey(key) || st.approved(key)) continue;
+                String text = String.valueOf(c.getValue().get("text"));
+                if (Grounding.addressesAi(text)) items.add(Tx.m("key", key, "reason", "the sentence addresses an AI", "rule", "regrounding"));
+                else if (!Grounding.isClaim(text)) items.add(Tx.m("key", key, "reason", "no longer reads as a claim", "rule", "regrounding"));
+            }
+            if (!items.isEmpty()) commit(portalKey, portal, "contest", "system", Tx.m("items", items), null);
+            Map<String, String> contested = contested();
+            note("contest", "Maintenance re-checked " + plural(seen.size() + st.settledClaims.size(), "settled item", "settled items")
+                    + " against today's rules · " + plural(items.size(), "newly contested", "newly contested"),
+                    Tx.m("checked", (long) (seen.size() + st.settledClaims.size()), "contested", (long) items.size()));
+            return Tx.m("checked", (long) (seen.size() + st.settledClaims.size()), "newly_contested", (long) items.size(),
+                    "contested", (long) contested.size());
+        });
+    }
+
+    // ------------------------------------------------------------ canon and archive
+
+    /**
+     * How strongly a settled item holds a place in the canon, 0 to 1: it fades with
+     * the age of its latest evidence, more slowly the more independent sources
+     * stand behind it (a forgetting curve whose stability grows with each
+     * confirmation). Fading moves an item from the canon to the archive; nothing
+     * is deleted, and a new source or an approval brings it back.
+     */
+    static double strength(long latestEvidence, long support, long now) {
+        double days = Math.max(0, now - latestEvidence) / 86_400_000.0;
+        double halfLife = HALF_LIFE_DAYS * Math.max(1, support);
+        return Math.pow(0.5, days / halfLife);
+    }
+
+    /** Days for a one-source item's strength to halve. */
+    static final double HALF_LIFE_DAYS = 365;
+    /** Below this strength an item is in the archive, not the canon. */
+    static final double CANON = 0.5;
+
+    /** The latest evidence for a fact: its newest supporting episode, or a later approval. */
+    private static long latestEvidence(State st, String key, Map<String, Object> d, List<Map<String, Object>> episodes) {
+        long t = d.get("t") instanceof Number ? ((Number) d.get("t")).longValue() : 0;
+        if (episodes != null) for (Map<String, Object> x : episodes) if (x.get("t") instanceof Number) t = Math.max(t, ((Number) x.get("t")).longValue());
+        State.At a = st.approvals.get(key);
+        return a != null ? Math.max(t, a.wall()) : t;
     }
 
     // ------------------------------------------------------------ enlisting a model
@@ -1027,6 +1211,36 @@ public final class Engine {
 
     private static String clip(String s) { return s.length() > 40 ? s.substring(0, 40) : s; }
 
+    private static long quarantinedCount(State st) {
+        long n = 0;
+        for (Map.Entry<String, Map<String, Object>> e : st.claims.entrySet())
+            if (Boolean.TRUE.equals(e.getValue().get("quarantined")) && !st.approved(e.getKey()) && !st.denied(e.getKey())) n++;
+        return n;
+    }
+
+    /** What's waiting for the steward besides held facts: contested items and quarantined claims. */
+    public synchronized List<Object> stewardQueue() {
+        State st = state();
+        List<Object> out = new ArrayList<>();
+        Map<String, String> names = st.names();
+        for (Map.Entry<String, String> c : contested().entrySet()) {
+            String key = c.getKey(), text = key;
+            for (Map<String, Object> d : st.datoms.values())
+                if (!"name".equals(d.get("a")) && key.equals(st.factKey("culture", d))) {
+                    String e = st.find((String) d.get("e"));
+                    text = (names.containsKey(e) ? names.get(e) : e) + " " + d.get("a") + " " + display(st, names, d.get("v"));
+                    break;
+                }
+            if (st.claims.containsKey(key)) text = String.valueOf(st.claims.get(key).get("text"));
+            out.add(Tx.m("key", key, "kind", "contested", "text", text, "why", c.getValue()));
+        }
+        for (Map.Entry<String, Map<String, Object>> e : st.claims.entrySet())
+            if (Boolean.TRUE.equals(e.getValue().get("quarantined")) && !st.approved(e.getKey()) && !st.denied(e.getKey()))
+                out.add(Tx.m("key", e.getKey(), "kind", "quarantined", "text", e.getValue().get("text"),
+                        "why", "it addresses an AI, not the world: kept out of memory until you approve it"));
+        return out;
+    }
+
     /** Settled claims, readable, optionally filtered. */
     public synchronized List<Object> claims(String query) {
         State st = state();
@@ -1108,6 +1322,8 @@ public final class Engine {
                 "culture", (long) memory("").size(),
                 "held", (long) held().size(),
                 "claims", (long) st.claims.size(),
+                "contested", (long) contested().size(),
+                "quarantined", (long) quarantinedCount(st),
                 "settled_claims", (long) st.settledClaims.size(),
                 "verdicts", (long) st.verdicts.size(),
                 "results", (long) st.results.size(),
@@ -1167,6 +1383,9 @@ public final class Engine {
         Map<String, String> names = st.names();
         String q = query == null ? "" : query.trim().toLowerCase(Locale.ROOT);
         TreeMap<String, Map<String, Object>> rows = new TreeMap<>();
+        TreeMap<String, List<Map<String, Object>>> episodes = groupEpisodes(st);
+        Map<String, String> contested = contestedNow(st, episodes);
+        long now = nextHlc()[0];
         for (Map<String, Object> d : st.tier("culture")) {
             if ("name".equals(d.get("a"))) continue;
             String ent = names.containsKey(st.find((String) d.get("e"))) ? names.get(st.find((String) d.get("e"))) : (String) d.get("e");
@@ -1176,9 +1395,14 @@ public final class Engine {
             String key = Json.canon(Arrays.asList(ent.toLowerCase(Locale.ROOT), d.get("a"), val));
             Map<String, Object> cur = rows.get(key);
             long sup = ((Number) d.get("support")).longValue();
-            if (cur == null || ((Number) cur.get("support")).longValue() < sup)
-                rows.put(key, Tx.m("entity", ent, "a", d.get("a"), "v", val, "support", sup, "nu", d.get("nu"),
-                        "key", st.factKey("culture", d), "edited", Boolean.TRUE.equals(d.get("edited"))));
+            if (cur == null || ((Number) cur.get("support")).longValue() < sup) {
+                String fk = st.factKey("culture", d);
+                double strength = strength(latestEvidence(st, fk, d, episodes.get(fk)), sup, now);
+                Map<String, Object> r = Tx.m("entity", ent, "a", d.get("a"), "v", val, "support", sup, "nu", d.get("nu"),
+                        "key", fk, "edited", Boolean.TRUE.equals(d.get("edited")), "layer", strength >= CANON ? "canon" : "archive");
+                if (contested.containsKey(fk)) r.put("contested", contested.get(fk));
+                rows.put(key, r);
+            }
         }
         return new ArrayList<Object>(rows.values());
     }

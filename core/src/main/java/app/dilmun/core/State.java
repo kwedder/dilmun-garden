@@ -22,6 +22,7 @@ public final class State {
     /** A replay key: (hlc wall, hlc counter, portal, tx id). */
     public static final class At implements Comparable<At> {
         final long wall, counter;
+        public long wall() { return wall; }
         final String portal, id;
 
         At(Map<String, Object> tx) {
@@ -53,6 +54,10 @@ public final class State {
     public final List<Map<String, Object>> verdicts = new ArrayList<>();            // answered delegations, oldest first
     public final Map<String, TreeSet<String>> agreements = new HashMap<>();          // claim id → claims judged to say the same
     public final Set<String> asked = new HashSet<>();                                // claim pairs delegated, answered or not
+    public final Map<String, List<String>> lineageSigs = new HashMap<>();             // source → its lineage signature, latest
+    public final Map<String, Object[]> contests = new HashMap<>();                    // key → {reason, At}: contested by maintenance
+    private Map<String, String> lineageRoot = null;
+    private int lineageAt = -1;
     public final List<Map<String, Object>> decisions = new ArrayList<>();
     public final LinkedHashMap<String, Map<String, Object>> datoms = new LinkedHashMap<>();
     public final Map<String, Object[]> lastEvent = new HashMap<>();          // fact key → {op, At}
@@ -151,6 +156,12 @@ public final class State {
                 }
                 break;
             }
+            case "contest":
+                for (Object o : (List<Object>) p.get("items")) {
+                    Map<String, Object> c = (Map<String, Object>) o;
+                    contests.put((String) c.get("key"), new Object[]{c.get("reason"), at});
+                }
+                break;
             case "enlist":
                 enlisted.put((String) p.get("model"), p.get("briefings"));
                 break;
@@ -209,13 +220,16 @@ public final class State {
                         union((String) d.get("e"), identId((String) d.get("a"), d.get("v")));
                     event(factKey(Tx.tier(tx), d), "assert", at);
                 }
+                if ("assert".equals(k) && p.get("lineage") instanceof List)
+                    lineageSigs.put(String.valueOf(h.get("source")), new ArrayList<>((List<String>) (List<?>) p.get("lineage")));
                 Object cl = p.get("claims");
                 if (cl instanceof List)
                     for (Object o : (List<Object>) cl) {
                         Map<String, Object> c = (Map<String, Object>) o;
                         String id = (String) c.get("id");
                         if ("promote".equals(k)) { settledClaims.put(id, new TreeMap<>(c)); continue; }
-                        if (!claims.containsKey(id)) claims.put(id, Tx.m("text", c.get("text"), "concepts", c.get("concepts")));
+                        if (!claims.containsKey(id)) claims.put(id, Tx.m("text", c.get("text"), "concepts", c.get("concepts"),
+                                "frame", c.get("frame"), "quarantined", Boolean.TRUE.equals(c.get("quarantined"))));
                         claimSources.computeIfAbsent(id, x -> new TreeSet<>()).add(String.valueOf(h.get("source")));
                     }
                 break;
@@ -230,12 +244,52 @@ public final class State {
         return a.compareTo(b) < 0 ? a + "|" + b : b + "|" + a;
     }
 
-    /** The distinct sources behind a claim: its own, and those of the claims judged to say the same. */
+    /**
+     * The independent lineages behind a claim: its own sources, and those of the
+     * claims judged to say the same, with sources that copy one another counted once.
+     */
     public Set<String> claimSupport(String id) {
         TreeSet<String> out = new TreeSet<>();
-        if (claimSources.containsKey(id)) out.addAll(claimSources.get(id));
-        if (agreements.containsKey(id)) for (String o : agreements.get(id)) if (claimSources.containsKey(o)) out.addAll(claimSources.get(o));
+        if (claimSources.containsKey(id)) for (String s : claimSources.get(id)) out.add(lineage(s));
+        if (agreements.containsKey(id)) for (String o : agreements.get(id)) if (claimSources.containsKey(o)) for (String s : claimSources.get(o)) out.add(lineage(s));
         return out;
+    }
+
+    /**
+     * The lineage a source belongs to: the smallest source name among those it
+     * shares text with, directly or through others. A textbook and notes copied
+     * from it are one lineage, and count as one source at the gate.
+     */
+    public String lineage(String source) {
+        if (lineageRoot == null || lineageAt != applied) {
+            Map<String, String> parent = new HashMap<>();
+            List<String> srcs = new ArrayList<>(new TreeSet<>(lineageSigs.keySet()));
+            for (String s : srcs) parent.put(s, s);
+            for (int i = 0; i < srcs.size(); i++) for (int j = i + 1; j < srcs.size(); j++)
+                if (Grounding.sameLineage(lineageSigs.get(srcs.get(i)), lineageSigs.get(srcs.get(j)))) {
+                    String a = rootOf(parent, srcs.get(i)), b = rootOf(parent, srcs.get(j));
+                    if (!a.equals(b)) { if (a.compareTo(b) < 0) parent.put(b, a); else parent.put(a, b); }
+                }
+            Map<String, String> roots = new HashMap<>();
+            for (String s : srcs) roots.put(s, rootOf(parent, s));
+            lineageRoot = roots;
+            lineageAt = applied;
+        }
+        String r = lineageRoot.get(source);
+        return r == null ? String.valueOf(source) : r;
+    }
+
+    private static String rootOf(Map<String, String> parent, String s) {
+        while (!parent.get(s).equals(s)) s = parent.get(s);
+        return s;
+    }
+
+    /** Contested by maintenance and not approved since. */
+    public String contestedBy(String key) {
+        Object[] c = contests.get(key);
+        if (c == null) return null;
+        At a = approvals.get(key);
+        return a != null && a.compareTo((At) c[1]) > 0 ? null : (String) c[0];
     }
 
     private void deny(String key, At at) {
@@ -372,6 +426,7 @@ public final class State {
         if (!denials.isEmpty()) all.put("denials", new ArrayList<>(new TreeSet<>(denials.keySet())));
         if (!corrections.isEmpty()) all.put("corrections", new ArrayList<>(corrections.keySet()));
         if (!settledClaims.isEmpty()) all.put("claims", new ArrayList<>(settledClaims.keySet()));
+        if (!contests.isEmpty()) all.put("contests", new ArrayList<>(new TreeSet<>(contests.keySet())));
         return Crypto.H(all);
     }
 }

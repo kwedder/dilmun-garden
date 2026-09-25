@@ -507,6 +507,62 @@ public final class Grounding {
         return out;
     }
 
+    // ------------------------------------------------------------ guards
+
+    /**
+     * Text that speaks to an AI rather than about the world: "ignore previous
+     * instructions", "system prompt", "tell the user". A source can carry it on
+     * purpose (memory poisoning: one hostile file becomes a lasting record that
+     * is later put in front of the model). The arbiters keep such text out of
+     * memory until the steward approves it.
+     */
+    private static final Pattern ADDRESSES_AI = Pattern.compile(
+            "\\b(ignore|disregard|forget|override)\\b[^.]{0,60}\\b(instructions?|prompts?|rules|previous|above|everything)\\b"
+            + "|\\byou (must|should|will|are now|have to|need to)\\b"
+            + "|\\b(system prompt|system message|jailbreak|as an ai|large language model|language model|chatbot)\\b"
+            + "|\\b(tell|inform|remind) the user\\b|\\bthe assistant\\b"
+            + "|</?\\s*(system|instruction|prompt|assistant)\\s*>",
+            Pattern.CASE_INSENSITIVE);
+
+    public static boolean addressesAi(String text) {
+        return text != null && ADDRESSES_AI.matcher(text).find();
+    }
+
+    /**
+     * A source's lineage signature: hashes of its 8-word runs, keeping only the
+     * sixteenth whose hash ends in zero, so the same passage gives the same sample
+     * in any file that copies it. Two sources that share many of these share
+     * text, whichever one copied the other.
+     */
+    public static List<String> lineage(String text) {
+        List<String> ws = new ArrayList<>();
+        for (String t : tokens(text)) if (Character.isLetterOrDigit(t.charAt(0))) ws.add(t);
+        java.util.TreeSet<String> out = new java.util.TreeSet<>();
+        for (int i = 0; i + 8 <= ws.size(); i++) {
+            long h = 0xcbf29ce484222325L;                              // FNV-1a over the run
+            for (int j = i; j < i + 8; j++) {
+                for (char c : ws.get(j).toCharArray()) { h ^= c; h *= 0x100000001b3L; }
+                h ^= ' '; h *= 0x100000001b3L;
+            }
+            if ((h & 15) == 0) out.add(Long.toHexString(h));
+            if (out.size() >= LINEAGE_MAX) break;
+        }
+        return new ArrayList<>(out);
+    }
+
+    /** Most samples kept per source. */
+    static final int LINEAGE_MAX = 600;
+
+    /** Whether two lineage signatures share enough text to be one lineage. */
+    public static boolean sameLineage(java.util.Collection<String> a, java.util.Collection<String> b) {
+        if (a == null || b == null || a.isEmpty() || b.isEmpty()) return false;
+        java.util.Collection<String> small = a.size() <= b.size() ? a : b, big = small == a ? b : a;
+        java.util.Set<String> bs = big instanceof java.util.Set ? (java.util.Set<String>) big : new HashSet<>(big);
+        int shared = 0;
+        for (String x : small) if (bs.contains(x)) shared++;
+        return shared >= 3 && shared >= 0.2 * small.size();
+    }
+
     // ------------------------------------------------------------ claims
 
     /** Openings that speak to the reader or set up an example, not state a claim. */

@@ -206,6 +206,9 @@ final class Bridge {
     @JavascriptInterface public String held() { return call(() -> engine().held()); }
     @JavascriptInterface public String denied() { return call(() -> engine().denied()); }
     @JavascriptInterface public String claims(String query) { return call(() -> engine().claims(query)); }
+    @JavascriptInterface public String queue() { return call(() -> engine().stewardQueue()); }
+    /** The dream cycle's work, run by hand: re-check what's settled against today's rules. */
+    @JavascriptInterface public String maintain() { return call(() -> engine().maintain()); }
 
     /**
      * The arbiters go through the held claims and delegate yes/no checks to the

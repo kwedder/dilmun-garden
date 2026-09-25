@@ -203,6 +203,7 @@ final class Bridge {
     @JavascriptInterface public String results(int limit) { return call(() -> engine().results(limit)); }
     @JavascriptInterface public String memory(String query) { return call(() -> engine().memory(query)); }
     @JavascriptInterface public String held() { return call(() -> engine().held()); }
+    @JavascriptInterface public String denied() { return call(() -> engine().denied()); }
     @JavascriptInterface public String log(int offset, int limit) { return call(() -> engine().log(offset, limit)); }
     @JavascriptInterface public String tx(String id) { return call(() -> Json.parse(engine().tx(id))); }
     @JavascriptInterface public String verify() { return call(() -> engine().verify()); }
@@ -229,6 +230,19 @@ final class Bridge {
 
     @JavascriptInterface public String approve(String key) {
         return call(() -> { engine().approve(Collections.singletonList(key)); return engine().gate(); });
+    }
+
+    @JavascriptInterface public String deny(String key) {
+        return call(() -> { engine().deny(Collections.singletonList(key)); return engine().gate(); });
+    }
+
+    /** request: {key, entity, a, v}. */
+    @JavascriptInterface public String correct(String request) {
+        return call(() -> {
+            Map<String, Object> r = Json.obj(request);
+            engine().correct(String.valueOf(r.get("key")), String.valueOf(r.get("entity")), String.valueOf(r.get("a")), String.valueOf(r.get("v")));
+            return engine().gate();
+        });
     }
 
     @JavascriptInterface public String useSamples() {

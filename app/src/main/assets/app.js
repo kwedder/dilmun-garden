@@ -624,16 +624,38 @@
       t.appendChild(el("b", null, h.entity)); t.appendChild(el("span", "a", h.a)); t.appendChild(document.createTextNode(h.v));
       main.appendChild(t);
       main.appendChild(el("div", "m", plural(h.support, "source", "sources") + (h.approved ? " · approved" : "")));
+      if (h.quote) main.appendChild(el("div", "m quote", "“" + h.quote + "”"));
       row.appendChild(main);
+      const acts = el("div", "row tight");
       if (!h.approved) {
         const b = el("button", "small", "Approve");
         b.addEventListener("click", () => {
           const r = ok(call("approve", h.key));
           if (r !== undefined) { toast("Approved and signed · " + plural(r, "fact", "facts") + " promoted"); refresh(); }
         });
-        row.appendChild(b);
+        acts.appendChild(b);
       }
+      factActions(acts, row, h);
+      row.appendChild(acts);
       held.appendChild(row);
+    });
+
+    const dn = $("denied-list"); dn.innerHTML = "";
+    const dns = ok(call("denied")) || [];
+    $("denied-head").hidden = !dns.length;
+    dns.forEach(d => {
+      const row = li(), main = el("div", "main"), t = el("div", "t");
+      t.appendChild(el("b", null, d.entity)); t.appendChild(el("span", "a", d.a)); t.appendChild(document.createTextNode(d.v));
+      main.appendChild(t);
+      if (d.quote) main.appendChild(el("div", "m quote", "“" + d.quote + "”"));
+      row.appendChild(main);
+      const b = el("button", "small", "Restore");
+      b.addEventListener("click", () => {
+        const r = ok(call("approve", d.key));
+        if (r !== undefined) { toast("Restored as approved · " + plural(r, "fact", "facts") + " promoted"); refresh(); }
+      });
+      row.appendChild(b);
+      dn.appendChild(row);
     });
 
     const dl = $("dir-list"); dl.innerHTML = "";
@@ -661,6 +683,35 @@
       row.addEventListener("click", () => openTx(r.tx));
       rl.appendChild(row);
     });
+  }
+
+  /* Edit and Deny, for a held or a settled fact. Both are steward actions, signed and logged. */
+  function factActions(acts, row, f) {
+    const edit = el("button", "small", "Edit"), deny = el("button", "small", "Deny");
+    deny.addEventListener("click", () => {
+      const r = ok(call("deny", f.key));
+      if (r !== undefined) { toast("Denied and signed · the gate won't promote it"); refresh(); }
+    });
+    edit.addEventListener("click", () => {
+      if (row.querySelector(".edit")) return;
+      const form = el("div", "edit"), e = el("input"), a = el("select"), v = el("input");
+      e.value = f.entity; v.value = f.v;
+      ((summary && summary.schema) || []).filter(x => x !== "name").forEach(x => {
+        const o = el("option", null, x); o.value = x; if (x === f.a) o.selected = true; a.appendChild(o);
+      });
+      const save = el("button", "small primary", "Save"), cancel = el("button", "small", "Cancel");
+      cancel.addEventListener("click", () => form.remove());
+      save.addEventListener("click", () => {
+        const r = ok(call("correct", JSON.stringify({ key: f.key, entity: e.value, a: a.value, v: v.value })));
+        if (r !== undefined) { toast("Edited and signed · the original is denied, your version is settled"); refresh(); }
+      });
+      const btns = el("div", "row tight"); btns.appendChild(save); btns.appendChild(cancel);
+      [e, a, v, btns].forEach(x => form.appendChild(x));
+      row.appendChild(form);
+      e.focus();
+    });
+    acts.appendChild(edit); acts.appendChild(deny);
+    row.classList.add("fact");
   }
 
   $("btn-pause").addEventListener("click", () => {
@@ -693,13 +744,16 @@
       t.appendChild(el("b", null, r.entity)); t.appendChild(el("span", "a", r.a)); t.appendChild(document.createTextNode(r.v));
       main.appendChild(t);
       row.appendChild(main);
-      row.appendChild(el("span", "badge" + (r.support < k ? " appr" : ""), r.support < k ? "approved" : plural(r.support, "source", "sources")));
+      row.appendChild(el("span", "badge" + (r.support < k ? " appr" : ""), r.edited ? "edited" : r.support < k ? "approved" : plural(r.support, "source", "sources")));
+      const acts = el("div", "row tight");
+      factActions(acts, row, r);
+      row.appendChild(acts);
       list.appendChild(row);
     });
   }
 
   /* ------------------------------------------------------------ log */
-  const STEWARD_KINDS = ["genesis", "admit", "schema", "approve", "pause", "resume", "skill"];
+  const STEWARD_KINDS = ["genesis", "admit", "schema", "approve", "deny", "correct", "pause", "resume", "skill"];
   let logOffset = 0;
   function renderLog(reset) {
     const list = $("log-list");

@@ -4,6 +4,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -324,6 +325,7 @@ public final class Engine {
             else if (ident.size() != 2 || !"name".equals(ident.get(0)) || !(ident.get(1) instanceof String)
                     || ((String) ident.get(1)).trim().isEmpty() || !(vo instanceof String) || ((String) vo).trim().isEmpty())
                 reason = "the fact is incomplete";
+            else if ((reason = ground((String) ident.get(1), a, (String) vo, text, q)) != null) { }
             else if (accepted >= budget) reason = "over budget";
             if (reason != null) {
                 rejected.add(Tx.m("i", (long) i, "a", a, "reason", reason));
@@ -349,7 +351,7 @@ public final class Engine {
         }
         if (facts.size() > FACT_NOTES)
             note("fact", "…and " + plural(facts.size() - FACT_NOTES, "more fact", "more facts") + " checked", Tx.m("more", (long) (facts.size() - FACT_NOTES)));
-        note("check", "Checked quotes, schema, tools, budget: " + accepted + " kept · " + rejected.size() + " refused",
+        note("check", "Checked quotes, grounding, schema, tools, budget: " + accepted + " kept · " + rejected.size() + " refused",
                 Tx.m("accepted", accepted, "rejected", (long) rejected.size()));
         Map<String, Object> tx = commit(portalKey, portal, "assert", "episode:" + did,
                 Tx.m("proposal", proposal, "datoms", datoms, "rejected", rejected),
@@ -365,6 +367,33 @@ public final class Engine {
     private static String factLine(List<Object> ident, String a, Object v) {
         String e = ident.size() == 2 ? String.valueOf(ident.get(1)).trim() : "?";
         return e + " · " + a + " · " + (v == null ? "?" : String.valueOf(v).trim());
+    }
+
+    /** Grounding against the quote's sentence in the source, and the sentence before it. */
+    private static String ground(String entity, String a, String value, String text, Map<String, Object> q) {
+        int start = ((Number) q.get("start")).intValue(), end = ((Number) q.get("end")).intValue();
+        int s0 = sentenceStart(text, start), s1 = sentenceEnd(text, end);
+        int b0 = s0 > 0 ? sentenceStart(text, s0 - 1) : s0;
+        return Grounding.check(entity, a, value, (String) q.get("text"), text.substring(s0, s1), text.substring(b0, s0));
+    }
+
+    private static int sentenceStart(String text, int i) {
+        for (int j = i - 1; j >= 0; j--) {
+            char c = text.charAt(j);
+            if (c == '\n' && j > 0 && text.charAt(j - 1) == '\n') return j + 1;
+            if ((c == '.' || c == '!' || c == '?' || c == '\n') && j + 1 < text.length() && Character.isWhitespace(text.charAt(j + 1)) && j + 1 <= i - 1)
+                return j + 1;
+        }
+        return 0;
+    }
+
+    private static int sentenceEnd(String text, int i) {
+        for (int j = Math.max(i, 1) - 1; j < text.length(); j++) {
+            char c = text.charAt(j);
+            if (j >= i && (c == '.' || c == '!' || c == '?') && (j + 1 == text.length() || Character.isWhitespace(text.charAt(j + 1)))) return j + 1;
+            if (j >= i && c == '\n') return j;
+        }
+        return text.length();
     }
 
     private static boolean quoteMatches(String text, int start, int end, String quote) {
@@ -423,7 +452,7 @@ public final class Engine {
         for (Map<String, Object> d : st.tier("culture")) promoted.add(st.factKey("culture", d));
         for (Map.Entry<String, List<Map<String, Object>>> g : groupEpisodes(st).entrySet()) {
             Map<String, Object> d = g.getValue().get(0);
-            if ("name".equals(d.get("a")) || promoted.contains(g.getKey())) continue;
+            if ("name".equals(d.get("a")) || promoted.contains(g.getKey()) || st.denied(g.getKey())) continue;
             String e = st.find((String) d.get("e"));
             String ent = names.containsKey(e) ? names.get(e) : e, val = display(st, names, d.get("v"));
             if (!seen.add(Json.canon(Arrays.asList(ent.toLowerCase(Locale.ROOT), d.get("a"), val.toLowerCase(Locale.ROOT))))) continue;
@@ -520,13 +549,25 @@ public final class Engine {
         live();
         State st = state();
         notPaused(st);
+        List<Object> withdrawn = new ArrayList<>();                 // settled facts the steward has since denied
+        for (Map<String, Object> d : st.tier("culture")) {
+            String key = st.factKey("culture", d);
+            if (!"name".equals(d.get("a")) && st.denied(key) && !withdrawn.contains(key)) withdrawn.add(key);
+        }
+        if (!withdrawn.isEmpty()) {
+            Collections.sort(withdrawn, (x, y) -> ((String) x).compareTo((String) y));
+            note("retract", "Gate: withdrew " + plural(withdrawn.size(), "denied fact", "denied facts") + " from culture",
+                    Tx.m("retracted", (long) withdrawn.size()));
+            commit(portalKey, portal, "retract", "system", Tx.m("keys", withdrawn, "rule", "denied"), null);
+            st = state();
+        }
         Set<String> promoted = new HashSet<>();
         for (Map<String, Object> d : st.tier("culture")) promoted.add(st.factKey("culture", d));
         TreeMap<String, List<Map<String, Object>>> groups = groupEpisodes(st);
         long n = 0;
         for (Map.Entry<String, List<Map<String, Object>>> g : groups.entrySet()) {
             String key = g.getKey();
-            if (promoted.contains(key)) continue;
+            if (promoted.contains(key) || st.denied(key)) continue;
             List<Map<String, Object>> ds = g.getValue();
             Object[] last = st.lastEvent.get(key);
             State.At after = last != null && "retract".equals(last[0]) ? (State.At) last[1] : null;
@@ -539,7 +580,7 @@ public final class Engine {
                 if (!fresh.isEmpty()) ds = fresh;
             }
             long support = distinctSources(ds);
-            boolean approved = appr != null && (after == null || appr.compareTo(after) > 0);
+            boolean approved = st.approved(key) && (after == null || appr.compareTo(after) > 0);
             if (support < Policy.GATE_K && !approved) continue;
             Map<String, Object> rep = ds.get(0);
             for (Map<String, Object> d : ds) if (((String) d.get("id")).compareTo((String) rep.get("id")) < 0) rep = d;
@@ -558,9 +599,57 @@ public final class Engine {
                             "rule", approved && support < Policy.GATE_K ? "approved" : "auto")), null);
             n++;
         }
+        n += promoteCorrections(st, promoted);
         long waiting = held().size();
         if (waiting > 0) note("hold", "Gate held " + plural(waiting, "fact", "facts") + " for more sources or approval", Tx.m("held", waiting));
         return n;
+    }
+
+    /** The steward's corrected facts go to culture as written, with the original's quote. */
+    @SuppressWarnings("unchecked")
+    private long promoteCorrections(State st, Set<String> promoted) {
+        long n = 0;
+        for (Map<String, Object> c : st.corrections.values()) {
+            String name = (String) c.get("entity"), a = (String) c.get("a"), val = (String) c.get("v");
+            String e = State.identId("name", name);
+            boolean ref = refAttr(st, a);
+            Object v = ref ? Tx.m("ref", State.identId("name", val)) : val;
+            String key = correctedKey(st, name, a, val);
+            if (promoted.contains(key) || st.denied(key)) continue;
+            Object[] last = st.lastEvent.get(key);                  // withdrawn after this correction: back only if approved since
+            if (last != null && "retract".equals(last[0]) && ((State.At) last[1]).compareTo((State.At) c.get("at")) > 0) {
+                State.At appr = st.approvals.get(key);
+                if (appr == null || appr.compareTo((State.At) last[1]) < 0) continue;
+            }
+            String tx = (String) c.get("tx");
+            Object quote = c.get("quote");
+            long vf = nextHlc()[0];
+            List<Object> datoms = new ArrayList<>();
+            Map<String, Object> copy = datom("d:" + Crypto.H(Arrays.asList("correct", tx)).substring(0, 24), e, a, v, 1000L, vf,
+                    quote instanceof Map ? (Map<String, Object>) quote : null);
+            copy.put("origin", tx);
+            copy.put("edited", true);
+            datoms.add(copy);
+            datoms.add(datom("d:" + Crypto.H(Arrays.asList("correct", tx, "name")).substring(0, 24), e, "name", name, 1000L, vf, null));
+            if (ref) datoms.add(datom("d:" + Crypto.H(Arrays.asList("correct", tx, "vname")).substring(0, 24),
+                    State.identId("name", val), "name", val, 1000L, vf, null));
+            note("promote", "Gate: " + name + " " + a + " " + val + " · edited by the steward", Tx.m("support", 1L, "approved", true));
+            commit(portalKey, portal, "promote", "culture", Tx.m("datoms", datoms,
+                    "decision", Tx.m("key", key, "support", 1L, "rule", "corrected", "from", c.get("from"))), null);
+            promoted.add(key);
+            n++;
+        }
+        return n;
+    }
+
+    private static boolean refAttr(State st, String a) {
+        return st.schema.containsKey(a) && Boolean.TRUE.equals(st.schema.get(a).get("ref"));
+    }
+
+    /** The fact key a corrected fact will have in culture. */
+    private static String correctedKey(State st, String entity, String a, String val) {
+        Object v = refAttr(st, a) ? Tx.m("ref", State.identId("name", val)) : val;
+        return st.factKey("culture", Tx.m("e", State.identId("name", entity), "a", a, "v", v, "ctx", null));
     }
 
     private static String factText(State st, Map<String, Object> d) {
@@ -594,6 +683,37 @@ public final class Engine {
         Collections.sort(sorted);
         request("approve " + plural(sorted.size(), "held fact", "held facts"), true,
                 () -> commit(stewardKey, Tx.STEWARD, "approve", "system", Tx.m("keys", new ArrayList<Object>(sorted)), null));
+    }
+
+    /** The steward says these facts are wrong: the gate never promotes them, and withdraws them if settled. */
+    public synchronized void deny(List<String> keys) {
+        List<String> sorted = new ArrayList<>(keys);
+        Collections.sort(sorted);
+        request("deny " + plural(sorted.size(), "fact", "facts"), true,
+                () -> commit(stewardKey, Tx.STEWARD, "deny", "system", Tx.m("keys", new ArrayList<Object>(sorted)), null));
+    }
+
+    /**
+     * The steward rewrites a held or settled fact. The original is denied; the
+     * gate puts the corrected fact in culture, keeping the original's quote so
+     * it still points at where it came from.
+     */
+    public synchronized void correct(String key, String entity, String attribute, String value) {
+        String e = entity == null ? "" : entity.trim(), v = value == null ? "" : value.trim();
+        String a = attribute == null ? "" : attribute.trim().toLowerCase(Locale.ROOT).replace(' ', '_');
+        request("edit a fact", true, () -> {
+            State st = state();
+            if (e.isEmpty() || v.isEmpty()) throw new Store.Rejected("an edited fact needs an entity and a value");
+            if (!st.schema.containsKey(a) || "name".equals(a)) throw new Store.Rejected("attribute not in the schema: " + a);
+            if (State.norm(e).equals(State.norm(v))) throw new Store.Rejected("the value repeats the entity");
+            Object quote = null;
+            for (Map<String, Object> d : st.datoms.values())
+                if (key.equals(st.factKey("culture", d)) && d.get("quote") != null) { quote = d.get("quote"); break; }
+            if (quote == null) throw new Store.Rejected("no such fact");
+            if (key.equals(correctedKey(st, e, a, v))) throw new Store.Rejected("the edit changes nothing");
+            return commit(stewardKey, Tx.STEWARD, "correct", "system",
+                    Tx.m("from", key, "entity", e, "a", a, "v", v, "quote", quote), null);
+        });
     }
 
     public synchronized void pause() { request("pause the arbiters", true, () -> commit(stewardKey, Tx.STEWARD, "pause", "system", Tx.m(), null)); }
@@ -690,7 +810,8 @@ public final class Engine {
             Map<String, Object> cur = rows.get(key);
             long sup = ((Number) d.get("support")).longValue();
             if (cur == null || ((Number) cur.get("support")).longValue() < sup)
-                rows.put(key, Tx.m("entity", ent, "a", d.get("a"), "v", val, "support", sup, "nu", d.get("nu")));
+                rows.put(key, Tx.m("entity", ent, "a", d.get("a"), "v", val, "support", sup, "nu", d.get("nu"),
+                        "key", st.factKey("culture", d), "edited", Boolean.TRUE.equals(d.get("edited"))));
         }
         return new ArrayList<Object>(rows.values());
     }
@@ -706,11 +827,33 @@ public final class Engine {
             Map<String, Object> d = g.getValue().get(0);
             if ("name".equals(d.get("a")) || promoted.contains(g.getKey())) continue;
             long support = distinctSources(g.getValue());
-            if (support >= Policy.GATE_K) continue;
+            if (support >= Policy.GATE_K || st.denied(g.getKey())) continue;
             String e = st.find((String) d.get("e"));
             out.add(Tx.m("key", g.getKey(), "entity", names.containsKey(e) ? names.get(e) : e,
                     "a", d.get("a"), "v", display(st, names, d.get("v")), "support", support,
-                    "approved", st.approvals.containsKey(g.getKey())));
+                    "approved", st.approved(g.getKey()), "quote", quoteOf(d)));
+        }
+        return out;
+    }
+
+    /** Facts the steward denied and hasn't approved since, newest first, so a denial can be undone. */
+    public synchronized List<Object> denied() {
+        State st = state();
+        Map<String, String> names = st.names();
+        Map<String, Map<String, Object>> byKey = new HashMap<>();
+        for (Map<String, Object> d : st.datoms.values()) {
+            if ("name".equals(d.get("a"))) continue;
+            String key = st.factKey("culture", d);
+            if (st.denied(key) && !byKey.containsKey(key)) byKey.put(key, d);
+        }
+        List<Map.Entry<String, Map<String, Object>>> es = new ArrayList<>(byKey.entrySet());
+        Collections.sort(es, (x, y) -> st.denials.get(y.getKey()).compareTo(st.denials.get(x.getKey())));
+        List<Object> out = new ArrayList<>();
+        for (Map.Entry<String, Map<String, Object>> x : es) {
+            Map<String, Object> d = x.getValue();
+            String e = st.find((String) d.get("e"));
+            out.add(Tx.m("key", x.getKey(), "entity", names.containsKey(e) ? names.get(e) : e,
+                    "a", d.get("a"), "v", display(st, names, d.get("v")), "quote", quoteOf(d)));
         }
         return out;
     }

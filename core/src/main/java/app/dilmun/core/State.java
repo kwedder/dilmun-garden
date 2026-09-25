@@ -41,6 +41,8 @@ public final class State {
     public boolean paused = false;
     public final TreeMap<String, Map<String, Object>> openDirectives = new TreeMap<>();
     public final Map<String, At> approvals = new HashMap<>();
+    public final Map<String, At> denials = new HashMap<>();                  // fact key → the steward's latest denial
+    public final TreeMap<String, Map<String, Object>> corrections = new TreeMap<>(); // tx id → the steward's corrected fact
     public final List<Map<String, Object>> decisions = new ArrayList<>();
     public final LinkedHashMap<String, Map<String, Object>> datoms = new LinkedHashMap<>();
     public final Map<String, Object[]> lastEvent = new HashMap<>();          // fact key → {op, At}
@@ -107,6 +109,17 @@ public final class State {
                     if (cur == null || at.compareTo(cur) > 0) approvals.put((String) key, at);
                 }
                 break;
+            case "deny":
+                for (Object key : (List<Object>) p.get("keys")) deny((String) key, at);
+                break;
+            case "correct": {
+                Map<String, Object> c = new TreeMap<>(p);
+                c.put("at", at);
+                c.put("tx", Tx.id(tx));
+                corrections.put(Tx.id(tx), c);
+                deny((String) p.get("from"), at);
+                break;
+            }
             case "skill": {
                 TreeMap<Long, List<String>> vs = skills.get(p.get("name"));
                 if (vs == null) { vs = new TreeMap<>(); skills.put((String) p.get("name"), vs); }
@@ -167,6 +180,23 @@ public final class State {
             default:
                 break;   // genesis, admit: trust lives in the store
         }
+    }
+
+    private void deny(String key, At at) {
+        At cur = denials.get(key);
+        if (cur == null || at.compareTo(cur) > 0) denials.put(key, at);
+    }
+
+    /** Denied by the steward, and not approved since. The gate never promotes it, whatever the support. */
+    public boolean denied(String key) {
+        At d = denials.get(key), a = approvals.get(key);
+        return d != null && (a == null || a.compareTo(d) < 0);
+    }
+
+    /** Approved by the steward, and not denied since. */
+    public boolean approved(String key) {
+        At d = denials.get(key), a = approvals.get(key);
+        return a != null && (d == null || a.compareTo(d) > 0);
     }
 
     private static long countFacts(List<Object> datoms) {
@@ -273,7 +303,7 @@ public final class State {
             for (Map.Entry<Long, List<String>> v : e.getValue().entrySet()) vs.put(String.valueOf(v.getKey()), v.getValue());
             skillsOut.put(e.getKey(), vs);
         }
-        return Crypto.H(Tx.m(
+        Map<String, Object> all = Tx.m(
                 "K", settled(),
                 "decisions", dec,
                 "paused", paused,
@@ -281,6 +311,10 @@ public final class State {
                 "approvals", new ArrayList<>(new TreeSet<>(approvals.keySet())),
                 "directives", new ArrayList<>(openDirectives.keySet()),
                 "skills", skillsOut,
-                "places", new TreeMap<>(places)));
+                "places", new TreeMap<>(places));
+        // only when used, so a log without them keeps the state hash it always had
+        if (!denials.isEmpty()) all.put("denials", new ArrayList<>(new TreeSet<>(denials.keySet())));
+        if (!corrections.isEmpty()) all.put("corrections", new ArrayList<>(corrections.keySet()));
+        return Crypto.H(all);
     }
 }

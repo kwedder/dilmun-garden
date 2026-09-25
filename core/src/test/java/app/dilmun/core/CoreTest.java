@@ -240,6 +240,76 @@ public final class CoreTest {
         check(tiles && ps.size() > 3, "long text is split into passages that cover it exactly (" + ps.size() + ")");
         check(State.identId("name", "Aspirin").equals(State.identId("name", "  aspirin ")), "names are one entity whatever their case or spacing");
 
+        section("grounding");
+        check(Grounding.check("anthropology", "is_a", "vast", "Anthropology is a vast field of study.") != null
+                && Grounding.check("anthropology", "is_a", "vast field of study", "Anthropology is a vast field of study.") == null,
+                "a value cut short is refused (\"vast\"), the whole phrase is kept");
+        check(Grounding.check("biological", "is_a", "human beings", "Biological anthropology is the study of human beings.") != null
+                && Grounding.check("biological anthropology", "is_a", "study of human beings", "Biological anthropology is the study of human beings.") == null,
+                "a modifier taken for the thing is refused (\"biological\")");
+        check(Grounding.check("snakes", "is_a", "primates", "Snakes are reptiles, unlike primates.") != null
+                && Grounding.check("snake", "is_a", "reptile", "Snakes are reptiles, unlike primates.") == null,
+                "is_a needs the quote to say it, and plurals match");
+        check(String.valueOf(Grounding.check("humanity", "defined_as", "humanity", "Humanity is defined as humanity.")).contains("repeats"),
+                "a thing defined as itself is refused");
+        check(Grounding.check("ibuprofen", "is_a", "NSAID", "NSAIDs such as ibuprofen reduce pain.") == null
+                && Grounding.check("ibuprofen", "is_a", "NSAID", "Ibuprofen, an NSAID, is used to treat pain.") == null,
+                "\"V such as E\" and \"E, a V\" count as is_a");
+        check(Grounding.check("smoking", "causes", "lung", "Smoking causes lung cancer.") != null
+                && Grounding.check("smoking", "causes", "lung cancer", "Smoking causes lung cancer in adults.") == null,
+                "other attributes: the value must be the whole phrase too");
+        check(Grounding.check("aspirin", "treats", "fever", "used to treat fever", "Aspirin, an NSAID, is used to treat fever.", "") == null
+                && Grounding.check("aspirin", "date", "1899", "first sold in 1899", "It was first sold in 1899.", "Aspirin is an NSAID.") == null
+                && Grounding.check("morphine", "date", "1899", "first sold in 1899", "It was first sold in 1899.", "Aspirin is an NSAID.") != null,
+                "the entity may be elsewhere in the sentence, or before an \"It\"");
+        World gw = new World();
+        gw.src.files.put("anth.md", "Anthropology is a vast field of study. Biological anthropology is the study of human beings.\n");
+        gw.e.scan(gw.src);
+        Map<String, Object> gr = gw.e.extract("src:anth.md", gw.src, new ModelAgent(new FakeLlm(
+                "anthropology | is_a | vast | Anthropology is a vast\n"
+                + "biological | is_a | human beings | Biological anthropology is the study of human beings\n"
+                + "biological anthropology | is_a | study of human beings | Biological anthropology is the study of human beings\n"),
+                Policy.SCHEMA_ORDER, null));
+        check(((Number) gr.get("accepted")).longValue() == 1 && gr.toString().contains("cut short") && gr.toString().contains("does not say"),
+                "the arbiters refuse the model's inaccurate facts, with the reason, and keep the accurate one");
+
+        section("deny and edit at the gate");
+        World dw = new World();
+        dw.src.files.put("a.md", "- snakes | is_a | primates\n- snakes | is_a | reptiles\n- anthropology | is_a | vast\n");
+        dw.src.files.put("b.md", "- snakes | is_a | primates\n");
+        dw.e.scan(dw.src);
+        dw.e.extract("src:a.md", dw.src);
+        String wrongKey = null, vastKey = null, reptKey = null;
+        for (Object o : dw.e.held()) {
+            Map<?, ?> h = (Map<?, ?>) o;
+            if ("primates".equals(h.get("v"))) wrongKey = (String) h.get("key");
+            if ("vast".equals(h.get("v"))) vastKey = (String) h.get("key");
+            if ("reptiles".equals(h.get("v"))) reptKey = (String) h.get("key");
+        }
+        dw.e.deny(Collections.singletonList(wrongKey));
+        dw.e.gate();
+        check(!dw.e.held().toString().contains("primates") && dw.e.denied().toString().contains("primates"),
+                "a denied fact leaves the held list and shows as denied");
+        dw.e.extract("src:b.md", dw.src);
+        dw.e.gate();
+        check(!dw.e.memory("").toString().contains("primates"), "a denied fact is never promoted, even when a second source agrees");
+        check(dw.e.recall("snakes primates", 5).toString().indexOf("primates") < 0, "and Ask never sees it");
+        dw.e.approve(Collections.singletonList(wrongKey));
+        dw.e.gate();
+        check(dw.e.memory("").toString().contains("primates") && dw.e.denied().isEmpty(), "approving it later undoes the denial");
+        dw.e.deny(Collections.singletonList(wrongKey));
+        dw.e.gate();
+        check(!dw.e.memory("").toString().contains("primates"), "denying a settled fact withdraws it from culture");
+        dw.e.correct(vastKey, "anthropology", "is_a", "field of study");
+        dw.e.gate();
+        String mem = dw.e.memory("").toString();
+        check(mem.contains("field of study") && mem.contains("edited=true") && !dw.e.held().toString().contains("vast"),
+                "an edited fact goes to culture as written, and the original leaves the gate");
+        boolean noop = false;
+        try { dw.e.correct(reptKey, "snakes", "is_a", "reptiles"); } catch (Store.Rejected ex) { noop = true; }
+        check(noop, "an edit that changes nothing is refused");
+        check(State.replay(dw.e.store().valid()).stateHash().equals(dw.e.state().stateHash()), "denials and edits replay from the log to the same state");
+
         section("ask");
         g.src.files.put("hand.md", "Handbook: aspirin, an NSAID, relieves pain.\n- aspirin | is_a | NSAID\n");
         g.e.scan(g.src);

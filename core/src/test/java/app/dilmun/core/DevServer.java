@@ -176,6 +176,7 @@ public final class DevServer {
             case "results": return engine.results(((Number) a.get(0)).intValue());
             case "memory": return engine.memory((String) a.get(0));
             case "held": return engine.held();
+            case "denied": return engine.denied();
             case "log": return engine.log(((Number) a.get(0)).intValue(), ((Number) a.get(1)).intValue());
             case "tx": return Json.parse(engine.tx((String) a.get(0)));
             case "verify": return engine.verify();
@@ -213,6 +214,12 @@ public final class DevServer {
             case "pause": engine.pause(); return true;
             case "resume": engine.resume(); return true;
             case "approve": engine.approve(Collections.singletonList((String) a.get(0))); return engine.gate();
+            case "deny": engine.deny(Collections.singletonList((String) a.get(0))); return engine.gate();
+            case "correct": {
+                Map<String, Object> r = Json.obj((String) a.get(0));
+                engine.correct(String.valueOf(r.get("key")), String.valueOf(r.get("entity")), String.valueOf(r.get("a")), String.valueOf(r.get("v")));
+                return engine.gate();
+            }
             case "modelStatus": return modelStatus();
             case "setUseModel": useModel = Boolean.TRUE.equals(a.get(0)); return modelStatus();
             case "unloadModel": { Llama l = llama; llama = null; if (l != null) { l.close(); engine.noteWork("model", "Model unloaded", Tx.m("event", "unload")); } return modelStatus(); }

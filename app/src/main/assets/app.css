@@ -174,3 +174,10 @@ select.small{font:500 13px/1 var(--sans); color:var(--ink); background:var(--rai
 .pill.running{color:var(--warn); border-color:rgba(217,164,65,.45)}
 .pill.done{color:var(--good); border-color:rgba(127,184,154,.4)}
 .msg details .facts-used .held{color:var(--muted)}
+
+.list li{flex-wrap:wrap}
+.list li .edit{flex-basis:100%; display:flex; flex-direction:column; gap:6px; padding-top:8px}
+.list li .edit input, .list li .edit select{width:100%; box-sizing:border-box}
+.list li .edit input, .list li .edit select{font:15px var(--sans); color:var(--ink); background:var(--plate); border:1px solid var(--line2); border-radius:10px; padding:10px 12px}
+.list li.fact .main{flex:1 1 100%}
+.list li .m.quote{font-style:italic}

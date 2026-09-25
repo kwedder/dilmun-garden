@@ -157,11 +157,14 @@
             <div>
               <div class="label">Promotion gate</div>
               <div class="big">Needs <span id="gate-k">2</span> distinct sources, or your approval</div>
+              <div class="meta">Deny a fact and the gate never promotes it, however many sources agree. Edit one to settle your version instead.</div>
             </div>
             <button id="btn-gate" class="primary">Run the gate</button>
           </div>
           <div class="sub">Held</div>
           <ul id="held-list" class="list"></ul>
+          <div id="denied-head" class="sub" hidden>Denied</div>
+          <ul id="denied-list" class="list"></ul>
         </div>
 
         <div class="card">

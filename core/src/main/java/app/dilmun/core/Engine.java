@@ -313,6 +313,7 @@ public final class Engine {
         for (int i = 0; i < facts.size(); i++) {
             Map<String, Object> f = facts.get(i) instanceof Map ? (Map<String, Object>) facts.get(i) : Collections.<String, Object>emptyMap();
             String reason = null;
+            String[] fixed = null;                                     // the fact finished from its sentence, if it was cut short
             Object qo = f.get("quote"), ao = f.get("a"), vo = f.get("v"), io = f.get("ident"), no = f.get("nu");
             Map<String, Object> q = qo instanceof Map ? (Map<String, Object>) qo : Collections.<String, Object>emptyMap();
             String a = ao instanceof String ? (String) ao : String.valueOf(ao);
@@ -325,8 +326,9 @@ public final class Engine {
             else if (ident.size() != 2 || !"name".equals(ident.get(0)) || !(ident.get(1) instanceof String)
                     || ((String) ident.get(1)).trim().isEmpty() || !(vo instanceof String) || ((String) vo).trim().isEmpty())
                 reason = "the fact is incomplete";
-            else if ((reason = ground((String) ident.get(1), a, (String) vo, text, q)) != null) { }
-            else if (accepted >= budget) reason = "over budget";
+            else if ((reason = ground((String) ident.get(1), a, (String) vo, text, q)) != null
+                    && (fixed = repair((String) ident.get(1), a, (String) vo, text, q)) != null) reason = null;
+            if (reason == null && accepted >= budget) reason = "over budget";      // a repaired fact counts too
             if (reason != null) {
                 rejected.add(Tx.m("i", (long) i, "a", a, "reason", reason));
                 if (i < FACT_NOTES) note("fact", "Refused " + factLine(ident, a, vo) + " · " + reason,
@@ -334,12 +336,14 @@ public final class Engine {
                 continue;
             }
             String name = ((String) ident.get(1)).trim(), val = ((String) vo).trim();
+            if (fixed != null) { name = fixed[0]; val = fixed[1]; }
             if (((String) q.get("text")).indexOf('|') < 0) {                 // prose: write the fact as concepts
                 String sentence = sentenceOf(text, q);
                 name = Grounding.concept(name, sentence);
                 if (!"date".equals(a) && !"defined_as".equals(a)) val = Grounding.concept(val, sentence);
             }
-            if (i < FACT_NOTES) note("fact", "Kept " + factLine(ident, a, vo), Tx.m("kept", true));
+            if (i < FACT_NOTES) note("fact", "Kept " + factLine(ident, a, vo) + (fixed == null ? "" : " · finished from its sentence as "
+                    + fixed[0] + " · " + fixed[1]), Tx.m("kept", true, "repaired", fixed != null));
             long nu = no instanceof Number ? Math.max(0, Math.min(1000, ((Number) no).longValue())) : 500L;
             String e = State.identId("name", name);
             Object v = val;
@@ -380,6 +384,13 @@ public final class Engine {
         int s0 = sentenceStart(text, start), s1 = sentenceEnd(text, end);
         int b0 = s0 > 0 ? sentenceStart(text, s0 - 1) : s0;
         return Grounding.check(entity, a, value, (String) q.get("text"), text.substring(s0, s1), text.substring(b0, s0));
+    }
+
+    private static String[] repair(String entity, String a, String value, String text, Map<String, Object> q) {
+        int start = ((Number) q.get("start")).intValue(), end = ((Number) q.get("end")).intValue();
+        int s0 = sentenceStart(text, start), s1 = sentenceEnd(text, end);
+        int b0 = s0 > 0 ? sentenceStart(text, s0 - 1) : s0;
+        return Grounding.repair(entity, a, value, (String) q.get("text"), text.substring(s0, s1), text.substring(b0, s0));
     }
 
     private static String sentenceOf(String text, Map<String, Object> q) {

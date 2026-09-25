@@ -269,7 +269,12 @@ Java_app_dilmun_core_Llama_nativeGenerate(JNIEnv * env, jclass, jlong handle,
 
     const llama_vocab * vocab = llama_model_get_vocab(h->model);
     llama_sampler * smpl = llama_sampler_chain_init(llama_sampler_chain_default_params());
-    llama_sampler_chain_add(smpl, llama_sampler_init_penalties(llama_vocab_n_tokens(vocab), 64, 1.1f, 0.0f, 0.0f));
+    // A repetition penalty helps free writing, but a list of facts repeats "|",
+    // attributes and names on every line by design; penalising those makes a
+    // small model stop early or garble the format. So greedy decoding (temp 0,
+    // what extraction uses) runs without it; the caller stops a loop instead.
+    if (temp > 0.0f)
+        llama_sampler_chain_add(smpl, llama_sampler_init_penalties(llama_vocab_n_tokens(vocab), 64, 1.1f, 0.0f, 0.0f));
     if (temp <= 0.0f) {
         llama_sampler_chain_add(smpl, llama_sampler_init_greedy());
     } else {

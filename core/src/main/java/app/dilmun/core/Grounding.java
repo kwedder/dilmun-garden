@@ -96,6 +96,7 @@ public final class Grounding {
     private static final Pattern TOKEN = Pattern.compile("[\\p{L}\\p{N}]+(?:['’.\\-][\\p{L}\\p{N}]+)*|[,;:()\\[\\]—–.!?\"“”]");
     private static final Set<String> DETERMINERS = set("a", "an", "the", "this", "that", "these", "those");
     private static final Set<String> CALL = set("call", "calls", "called");
+    private static final Set<String> TITLES = set("Dr", "Mr", "Mrs", "Ms", "St", "Prof", "Sr", "Jr");
 
     private static final Set<String> PRONOUNS = set("it", "they", "this", "these", "its", "their", "he", "she", "such");
 
@@ -191,7 +192,8 @@ public final class Grounding {
             List<String> ct = rawTokens(context);
             for (int i = 1; i < ct.size(); i++) {
                 String prev = ct.get(i - 1);
-                boolean starts = ".".equals(prev) || "!".equals(prev) || "?".equals(prev) || "\"".equals(prev) || "“".equals(prev) || ":".equals(prev);
+                boolean abbrev = ".".equals(prev) && i >= 2 && TITLES.contains(ct.get(i - 2));   // "Dr. Owsley" is mid-sentence
+                boolean starts = !abbrev && (".".equals(prev) || "!".equals(prev) || "?".equals(prev) || "\"".equals(prev) || "“".equals(prev) || ":".equals(prev));
                 if (proper(ct.get(i)) && !starts) named.add(ct.get(i));
             }
         }
@@ -210,6 +212,52 @@ public final class Grounding {
         if (!proper(h)) ws.set(head, stem(h));
         else if (h.length() > 2 && h.endsWith("s") && Character.isUpperCase(h.charAt(h.length() - 2))) ws.set(head, h.substring(0, h.length() - 1)); // NSAIDs
         return String.join("_", ws);
+    }
+
+    /**
+     * A fact the model cut short, finished from its sentence: the value run on to
+     * where its phrase ends ("vast" → "vast field of study"), the entity run on
+     * by up to three words ("biological" → "biological anthropology"). Returns
+     * {entity, value} for the first version that passes every check, or null.
+     * The repair only ever takes words from the sentence, so it can't invent.
+     */
+    public static String[] repair(String entity, String attribute, String value, String quote, String sentence, String before) {
+        if (quote.indexOf('|') >= 0 || "date".equals(attribute)) return null;
+        List<String> raw = rawTokens(sentence), q = tokens(sentence);
+        List<Integer> es = find(q, words(entity)), vs = find(q, words(value));
+        int en = words(entity).size(), vn = words(value).size();
+        List<String> values = new ArrayList<>();
+        values.add(value);
+        for (int b : vs) {
+            int end = b + vn;
+            // run on through the phrase, and through "of" into its complement: "vast" → "vast field of study"
+            while (end < q.size() && end - b < vn + 6 && Character.isLetterOrDigit(q.get(end).charAt(0))
+                    && (!endsPhrase(q, end) || "of".equals(q.get(end)) && end + 1 < q.size() && !endsPhrase(q, end + 1))) end++;
+            if (end > b + vn) values.add(join(raw, b, end));
+        }
+        List<String> entities = new ArrayList<>();
+        entities.add(entity);
+        for (int a : es)
+            for (int k = 1; k <= 3 && a + en + k <= q.size(); k++) {
+                String t = q.get(a + en + k - 1);
+                if (!Character.isLetterOrDigit(t.charAt(0)) || LINK.contains(t) || AFTER_VALUE.contains(t)) break;
+                entities.add(join(raw, a, a + en + k));
+            }
+        for (String e : entities)
+            for (String v : values) {
+                if (e.equals(entity) && v.equals(value)) continue;
+                if (check(e, attribute, v, quote, sentence, before) == null) return new String[]{e, v};
+            }
+        return null;
+    }
+
+    private static String join(List<String> raw, int from, int to) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = from; i < to; i++) {
+            if (sb.length() > 0) sb.append(' ');
+            sb.append(raw.get(i));
+        }
+        return sb.toString();
     }
 
     /** The pattern agent quotes a whole "entity | attribute | value" line. */

@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Random;
 import java.util.TreeMap;
@@ -45,12 +46,13 @@ public final class CoreTest {
     static final class FakeLlm implements Llm {
         final String reply;
         int calls = 0;
-        String lastSystem = "";
+        String lastSystem = "", lastUser = "";
         FakeLlm(String reply) { this.reply = reply; }
         @Override public String id() { return "model:fake:0123456789ab"; }
         @Override public String generate(List<String[]> m, int max, float temp, boolean think, Llama.Sink sink) {
             calls++;
             lastSystem = m.get(0)[1];
+            lastUser = m.get(m.size() - 1)[1];
             if (sink != null) sink.onPiece(reply.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             return reply;
         }
@@ -289,6 +291,40 @@ public final class CoreTest {
                 && Grounding.concept("NSAIDs").equals("NSAID") && Grounding.concept("field_of_study").equals("field_of_study")
                 && Grounding.concept("species").equals("species"),
                 "a concept is the same key however a source words it");
+
+        section("one pass, numbered sentences");
+        String para = "# The Study of Humanity\nAnthropology is a vast field of study. Biological anthropology is the study of human beings. "
+                + "Dr. Owsley works in the U.S. and Peru. What do you think?\n";
+        List<int[]> ss = ModelAgent.sentences(para, 0, para.length());
+        List<String> sts = new ArrayList<>();
+        for (int[] x : ss) sts.add(para.substring(x[0], x[1]));
+        check(sts.size() == 5 && sts.get(1).equals("Anthropology is a vast field of study.") && sts.get(3).startsWith("Dr. Owsley works in the U.S. and Peru"),
+                "the passage is split into sentences, abbreviations kept whole: " + sts);
+        World nw = new World();
+        nw.src.files.put("anth.md", para);
+        nw.e.scan(nw.src);
+        FakeLlm nf = new FakeLlm("2 | anthropology | is_a | vast\n"
+                + "3 | biological | is_a | study_of_human_beings\n"
+                + "4 | Owsley | located_in | Peru\n"
+                + "9 | anthropology | is_a | science\n"
+                + "5 | you | is_a | thinker\n");
+        Map<String, Object> nr = nw.e.extract("src:anth.md", nw.src, new ModelAgent(nf, Policy.SCHEMA_ORDER, null));
+        String nh = nw.e.held().toString();
+        check(nf.lastUser.contains("[2] Anthropology is a vast field of study.") && nf.lastSystem.contains("sentence number | entity"),
+                "the model gets numbered sentences and answers with a sentence number instead of a quote");
+        check(((Number) nr.get("accepted")).longValue() == 3 && nh.contains("v=field_of_study") && nh.contains("entity=biological_anthropology")
+                && nh.contains("v=Peru"),
+                "facts the model cut short are finished from their sentence, and kept only if they then hold up: " + nh);
+        check(nr.toString().contains("quote does not match the source") && nr.toString().contains("not in the quote"),
+                "a sentence number that isn't there, and a fact the sentence doesn't state, are still refused");
+        ModelAgent am2 = new ModelAgent(nf, Policy.SCHEMA_ORDER, null);
+        check(am2.attribute("defines_as").equals("defined_as") && am2.attribute("location_in").equals("located_in")
+                && am2.attribute("is_a").equals("is_a") && am2.attribute("attribute").equals("attribute"),
+                "a misspelt attribute is read as the one schema attribute it's close to; anything else stays, and is refused");
+        check(!am2.systemPrompt().toLowerCase(Locale.ROOT).contains("anthropolog"), "the prompt names no example concept a model could copy into its facts");
+        ModelAgent.LineWatch lw = new ModelAgent.LineWatch();
+        check(lw.more("1 | a | is_a | b\n2 | c | is_a | d\n") && lw.more("1 | a | is_a | b\n") && !lw.more("1 | a | is_a | b\n"),
+                "a generation that repeats the same line three times is stopped");
 
         section("deny and edit at the gate");
         World dw = new World();

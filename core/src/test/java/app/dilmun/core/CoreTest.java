@@ -250,6 +250,15 @@ public final class CoreTest {
         check(g.e.recall("What is the capital of France?", 5).isEmpty(), "recall finds nothing for an unrelated question");
         List<String[]> am = Ask.messages(new ArrayList<String[]>(), "Is aspirin an NSAID?", rec, true);
         check(am.get(0)[1].contains("[1] aspirin is a NSAID") && am.get(am.size() - 1)[1].equals("Is aspirin an NSAID?"), "the prompt numbers the facts for citation");
+        List<String[]> at = Ask.messages(new ArrayList<String[]>(), "Is aspirin an NSAID?", rec, true, true);
+        String[] last = at.get(at.size() - 1);
+        check("prefill".equals(last[0]) && last[1].contains("[1] aspirin is a NSAID") && last[1].endsWith("[1]")
+                && at.get(at.size() - 2)[1].equals("Is aspirin an NSAID?"),
+                "with think on, the model's reasoning starts from the facts, one by one");
+        check(!"prefill".equals(am.get(am.size() - 1)[0])
+                && !"prefill".equals(Ask.messages(new ArrayList<String[]>(), "q", rec, false, true).get(1)[0]),
+                "no prefill without think, or without memory");
+        check(Ask.reasoning("What is x?", new ArrayList<Object>()).contains("no facts"), "with no facts, the reasoning starts by admitting it");
         int before2 = g.e.store().size();
         long rmark = seqOf(g.e.trace(0));
         g.e.recall("aspirin", 5);

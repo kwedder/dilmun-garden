@@ -262,7 +262,8 @@ public final class DevServer {
                     List<String[]> hist = new ArrayList<>();
                     for (Object o : (List<Object>) req.get("history")) { List<?> t = (List<?>) o; hist.add(new String[]{(String) t.get(0), (String) t.get(1)}); }
                     emit("job", Tx.m("id", id[0], "kind", "ask", "state", "progress", "facts", facts));
-                    String answer = l.generate(Ask.messages(hist, q, facts, mem), 96, 0.6f, Boolean.TRUE.equals(req.get("think")),
+                    boolean think = Boolean.TRUE.equals(req.get("think"));
+                    String answer = l.generate(Ask.messages(hist, q, facts, mem, think), 96, 0.6f, think,
                             piece -> { emit("token", Tx.m("id", id[0], "text", new String(piece, StandardCharsets.UTF_8))); return true; });
                     return Tx.m("text", answer, "facts", facts, "stats", l.stats(), "model", l.id());
                 });

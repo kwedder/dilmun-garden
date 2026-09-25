@@ -57,7 +57,7 @@ The app is built around **MiniCPM5-1B** by OpenBMB, in the GGUF format that llam
    - **settled** facts first: the ones that passed the gate (2 sources, or your approval)
    - then facts still **held** at the gate, marked *unconfirmed* so the model (and you) can tell them apart. With a single textbook almost everything is held, so this is what makes memory useful before a second source arrives.
 
-   Each fact goes in with its quote from the source. Tap **Memory given** under an answer to see exactly which facts it had, and which were unconfirmed. **Let it think first** lets a reasoning model think before it answers; it's slower. **Stop** ends an answer early.
+   Each fact goes in with its quote from the source. Tap **Memory given** under an answer to see exactly which facts it had, and which were unconfirmed. **Let it think first** lets a reasoning model think before it answers; it's slower. With memory on, the app writes the start of that thinking for the model: the question, then every fact it was given, then "going through them one at a time". So the model reasons from your memory fact by fact, instead of treating the facts as optional references. You see this opening at the top of **Reasoning**. **Stop** ends an answer early.
 
 Nothing said on the Ask tab is written to the log. Asking reads memory and never writes it: it is a read, not a directive, so no agent is deployed and the arbiters commit nothing. The read is traced, so the map and the activity card show it.
 

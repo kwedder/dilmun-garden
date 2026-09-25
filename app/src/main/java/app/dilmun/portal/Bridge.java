@@ -418,7 +418,7 @@ final class Bridge {
                 emit("job", Tx.m("id", id[0], "kind", "ask", "state", "progress", "facts", facts));
                 final StringBuilder pending = new StringBuilder();
                 final long[] last = {0};
-                String answer = l.generate(Ask.messages(history, q, facts, useMemory), 768, 0.6f, think, piece -> {
+                String answer = l.generate(Ask.messages(history, q, facts, useMemory, think), 768, 0.6f, think, piece -> {
                     pending.append(new String(piece, StandardCharsets.UTF_8));
                     long now = System.currentTimeMillis();
                     if (now - last[0] > 60) {

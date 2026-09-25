@@ -44,14 +44,41 @@ public final class Ask {
         return sb.toString();
     }
 
-    /** history: earlier {role, content} turns, oldest first. */
+    /**
+     * The start of the model's reasoning, written for it. The system prompt alone
+     * leaves the facts as a reference a small model can skip; putting them at the
+     * top of its own thinking makes it reason from them, fact by fact.
+     */
+    public static String reasoning(String question, List<Object> facts) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("The question is: ").append(question.trim()).append('\n');
+        if (facts.isEmpty()) {
+            return sb.append("My memory holds no facts about this question. I will say so first, and anything I add comes from general knowledge, not from memory.\n").toString();
+        }
+        sb.append("My memory gives me these facts, and my answer has to be built from them:\n");
+        for (int i = 0; i < facts.size(); i++) {
+            @SuppressWarnings("unchecked") Map<String, Object> f = (Map<String, Object>) facts.get(i);
+            sb.append(line(i + 1, f)).append('\n');
+        }
+        return sb.append("Going through them one at a time, what each one tells me about the question:\n[1]").toString();
+    }
+
     public static List<String[]> messages(List<String[]> history, String question, List<Object> facts, boolean useMemory) {
+        return messages(history, question, facts, useMemory, false);
+    }
+
+    /**
+     * history: earlier {role, content} turns, oldest first. With memory and think on,
+     * the last message is a "prefill": the model's reasoning starts with it.
+     */
+    public static List<String[]> messages(List<String[]> history, String question, List<Object> facts, boolean useMemory, boolean think) {
         List<String[]> out = new ArrayList<>();
         if (useMemory) out.add(new String[]{"system", system(facts)});
         else out.add(new String[]{"system", "You are a helpful assistant running on this device. Be brief."});
         int from = Math.max(0, history.size() - HISTORY);
         for (int i = from; i < history.size(); i++) out.add(history.get(i));
         out.add(new String[]{"user", question});
+        if (useMemory && think) out.add(new String[]{"prefill", reasoning(question, facts)});
         return out;
     }
 }

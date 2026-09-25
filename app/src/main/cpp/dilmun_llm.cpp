@@ -202,22 +202,50 @@ Java_app_dilmun_core_Llama_nativeGenerate(JNIEnv * env, jclass, jlong handle,
         env->DeleteLocalRef(jr);
         env->DeleteLocalRef(jc);
     }
-    std::string prompt;
+    // a last "prefill" message is the start of the model's own reply: it continues from it
+    std::string prefill;
+    if (!msgs.empty() && msgs.back().role == "prefill") {
+        prefill = msgs.back().content;
+        msgs.pop_back();
+    }
+    std::string prompt, think_tag;
     common_chat_templates_inputs in;
     in.messages = msgs;
     in.add_generation_prompt = true;
     in.enable_thinking = think == JNI_TRUE;
     try {
         in.use_jinja = true;
-        prompt = common_chat_templates_apply(h->tmpls.get(), in).prompt;
+        auto p = common_chat_templates_apply(h->tmpls.get(), in);
+        prompt = p.prompt;
+        think_tag = p.thinking_start_tag;
     } catch (...) {
         try {
             in.use_jinja = false;
-            prompt = common_chat_templates_apply(h->tmpls.get(), in).prompt;
+            auto p = common_chat_templates_apply(h->tmpls.get(), in);
+            prompt = p.prompt;
+            think_tag = p.thinking_start_tag;
         } catch (...) {
             for (auto & m : msgs) prompt += m.role + ": " + m.content + "\n";
             prompt += "assistant: ";
         }
+    }
+    // With thinking on, the prefill goes inside the thinking block, opened here
+    // unless the template's generation prompt already opened it. It is returned
+    // and streamed as part of the reply, so the reasoning shown starts with it.
+    std::string shown;
+    if (!prefill.empty()) {
+        if (think == JNI_TRUE) {
+            if (think_tag.empty()) think_tag = "<think>";
+            size_t end = prompt.find_last_not_of(" \n\r\t");
+            std::string trimmed = end == std::string::npos ? "" : prompt.substr(0, end + 1);
+            bool opened = trimmed.size() >= think_tag.size()
+                && trimmed.compare(trimmed.size() - think_tag.size(), think_tag.size(), think_tag) == 0;
+            if (opened) prompt = trimmed + "\n";
+            else prompt += think_tag + "\n";
+            shown = think_tag + "\n";
+        }
+        shown += prefill;
+        prompt += prefill;
     }
 
     llama_memory_clear(llama_get_memory(h->ctx), true);
@@ -255,7 +283,13 @@ Java_app_dilmun_core_Llama_nativeGenerate(JNIEnv * env, jclass, jlong handle,
     jmethodID on_piece = nullptr;
     if (sink) on_piece = env->GetMethodID(env->GetObjectClass(sink), "onPiece", "([B)Z");
 
-    std::string out, pending;
+    std::string out = shown, pending;
+    if (!shown.empty() && on_piece) {
+        jbyteArray b = to_bytes(env, shown);
+        env->CallBooleanMethod(sink, on_piece, b);
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        env->DeleteLocalRef(b);
+    }
     int pos = static_cast<int>(tokens.size());
     auto t1 = std::chrono::steady_clock::now();
     h->stop_reason = "length";

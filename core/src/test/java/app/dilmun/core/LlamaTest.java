@@ -51,6 +51,16 @@ public final class LlamaTest {
             String greedy2 = m.generate(msgs, 20, 0f, false, null);
             check(greedy1.equals(greedy2), "temperature 0 is repeatable");
 
+            List<String[]> pre = new ArrayList<>(msgs);
+            pre.add(new String[]{"prefill", "The memory says: [1] aspirin treats fever.\n[1]"});
+            final ByteArrayOutputStream preStreamed = new ByteArrayOutputStream();
+            String thought = m.generate(pre, 10, 0f, true, piece -> { preStreamed.write(piece, 0, piece.length); return true; });
+            check(thought.contains("<think>") && thought.contains("The memory says: [1] aspirin treats fever.\n[1]")
+                    && new String(preStreamed.toByteArray(), StandardCharsets.UTF_8).equals(thought),
+                    "with think on, a prefill opens the thinking block and is returned and streamed as its start");
+            String plain = m.generate(pre, 10, 0f, false, null);
+            check(plain.startsWith("The memory says:") && !plain.contains("<think>"), "without think, the reply simply starts with the prefill");
+
             final int[] seen = {0};
             m.generate(msgs, 200, 0.7f, false, piece -> ++seen[0] < 5);
             check(seen[0] == 5 && "stopped".equals(m.stats().get("stop")), "the sink can stop generation");

@@ -61,7 +61,9 @@ public final class Llama implements AutoCloseable, Llm {
     }
 
     /**
-     * Generate a reply to the messages, each {role, content}.
+     * Generate a reply to the messages, each {role, content}. A last message with
+     * role "prefill" is not sent as a turn: the reply starts with it (inside the
+     * thinking block when think is on), and the returned text includes it.
      * @param think let a reasoning model think before answering
      */
     @Override public synchronized String generate(List<String[]> messages, int maxTokens, float temp, boolean think, Sink sink) {

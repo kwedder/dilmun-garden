@@ -191,13 +191,24 @@ class Mem0:
                 return r
             client.chat.completions.create = counted
 
+    deadline = None                                              # stop taking in text after this time (time.time())
+    done = 0
+    total = 0
+
     def ingest(self, name, text):
         for c in chunks(text, 1500 if self.infer else 600):   # raw: small chunks, since each is returned whole
+            self.total += 1
+            if self.deadline and time.time() > self.deadline:
+                continue                                         # out of time: counted as not taken in
+            t = time.time()
             try:
                 self.m.add([{"role": "user", "content": c}], user_id="bench", infer=self.infer)
+                self.done += 1
             except Exception as e:                               # a malformed reply from a small model loses that chunk
                 self.failed += 1
                 print(f"  {self.name}: add failed: {str(e)[:120]}", file=sys.stderr)
+            if self.infer:
+                print(f"  {self.name}: chunk {self.total} of {name} in {time.time() - t:.1f} s", file=sys.stderr, flush=True)
 
     def recall(self, q):
         r = self.m.search(q, top_k=20, filters={"user_id": "bench"})
@@ -207,7 +218,7 @@ class Mem0:
     def size(self):
         got = self.m.get_all(filters={"user_id": "bench"}, top_k=100000)
         rows = got.get("results", got) if isinstance(got, dict) else got
-        out = {"items": len(rows), "store_bytes": dir_bytes(self.dir)}
+        out = {"items": len(rows), "store_bytes": dir_bytes(self.dir), "chunks": f"{self.done} of {self.total}"}
         if self.infer:
             out.update(llm_calls=self.calls, llm_prompt_tokens=self.prompt_tokens,
                        llm_completion_tokens=self.completion_tokens, failed_chunks=self.failed)
@@ -255,6 +266,7 @@ def main():
     ap.add_argument("--llm-model", default="local")
     ap.add_argument("--systems", default="bm25,chroma,mem0-raw,mem0")
     ap.add_argument("--out", default="memory-bench.json")
+    ap.add_argument("--max-minutes", type=float, default=0, help="stop mem0 taking in text after this long, and say how much it took in")
     args = ap.parse_args()
 
     dil = json.load(open(args.dilmun))
@@ -274,8 +286,18 @@ def main():
     for name in args.systems.split(","):
         if name == "mem0" and not args.llm_url:
             continue
-        print(f"{name}: taking in the text", file=sys.stderr)
+        traps = {}                                               # the traps first: small, so they're reported even if time runs out
+        for sc in dil["scenarios"]:
+            fresh = make(name)
+            for doc in sc["docs"]:
+                fresh.ingest(doc[0], doc[1])
+            ctx = fresh.recall(sc["question"])
+            traps[sc["name"]] = judge(sc["name"], ctx)
+            print(f"  {name} {sc['name']}: {ctx[:200]!r}", file=sys.stderr, flush=True)
+        print(f"{name}: taking in the text", file=sys.stderr, flush=True)
         s = make(name)
+        if args.max_minutes and isinstance(s, Mem0):
+            s.deadline = time.time() + args.max_minutes * 60
         t = time.time()
         for f, text in texts:
             s.ingest(f, text)
@@ -286,21 +308,17 @@ def main():
         query_ms = (time.time() - t) * 1000 / len(questions)
         r = {"system": name, "ingest_s": round(ingest, 2), "query_ms": round(query_ms, 1), "answers": answers}
         r.update(s.size())
-        traps = {}
-        for sc in dil["scenarios"]:
-            fresh = make(name)
-            for doc in sc["docs"]:
-                fresh.ingest(doc[0], doc[1])
-            ctx = fresh.recall(sc["question"])
-            traps[sc["name"]] = judge(sc["name"], ctx)
-            print(f"  {name} {sc['name']}: {ctx[:200]!r}", file=sys.stderr)
         r["traps"] = traps
         results.append(r)
+        report(results, questions, args.out)                     # after each system, so a timeout loses nothing done
 
+
+def report(results, questions, out):
     for r in results:
-        r["answered"], r["context_chars"], r["missed"] = score(r["answers"], questions)
-        del r["answers"]
-    json.dump(results, open(args.out, "w"), indent=1)
+        if "answers" in r:
+            r["answered"], r["context_chars"], r["missed"] = score(r["answers"], questions)
+            del r["answers"]
+    json.dump(results, open(out, "w"), indent=1)
 
     cols = [r["system"] for r in results]
     rows = [
@@ -311,6 +329,7 @@ def main():
         ("LLM tokens to take them in", lambda r: str(r.get("llm_prompt_tokens", 0) + r.get("llm_completion_tokens", 0))),
         ("chunks the LLM failed on", lambda r: str(r.get("failed_chunks", "-"))),
         ("recall time per question", lambda r: "%.1f ms" % r["query_ms"]),
+        ("text taken in (chunks)", lambda r: r.get("chunks", "all")),
         ("items stored", lambda r: str(r["items"])),
         ("store size on disk", lambda r: "%.0f KB" % (r["store_bytes"] / 1024)),
         ("planted instruction", lambda r: r["traps"].get("poison", "")),

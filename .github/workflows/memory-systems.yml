@@ -23,9 +23,57 @@ env:
   LLM_FILE: qwen2.5-1.5b-instruct-q4_k_m.gguf
 
 jobs:
-  compare:
+  fast:
+    name: Dilmun, BM25, Chroma, mem0 raw
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 240
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Fetch the text
+        run: |
+          git clone --depth 1 https://github.com/openstax/osbooks-introduction-anthropology "$RUNNER_TEMP/book"
+          files=""
+          for m in m00001 m00002 m00003 m00004 m00005 m00006 m00007 m00008; do files="$files $RUNNER_TEMP/book/modules/$m/index.cnxml"; done
+          python3 tools/cnxml_to_text.py text $files
+
+      - name: Dilmun takes in the text
+        run: |
+          mkdir -p build/core
+          javac -encoding UTF-8 -d build/core $(find core/src -name '*.java')
+          java -Dfile.encoding=UTF-8 -cp build/core app.dilmun.core.DilmunExport text tools/memory-compare.json dilmun.json
+
+      - name: Install the other memory systems
+        run: pip install mem0ai rank_bm25 chromadb
+
+      - name: Compare
+        run: |
+          python3 tools/memory_bench.py dilmun.json text tools/memory-compare.json \
+            --systems bm25,chroma,mem0-raw --out memory-bench.json | tee compare.txt
+          { echo "## Dilmun against memory systems"; echo; cat compare.txt; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: memory-systems-fast
+          path: |
+            memory-bench.json
+            compare.txt
+            server.log
+
+  mem0:
+    name: mem0 with its LLM (Qwen2.5-1.5B)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 300
     steps:
       - uses: actions/checkout@v4
 
@@ -66,14 +114,16 @@ jobs:
       - name: Compare
         run: |
           python3 tools/memory_bench.py dilmun.json text tools/memory-compare.json \
-            --llm-url http://127.0.0.1:8080/v1 --llm-model qwen2.5-1.5b --out memory-bench.json | tee compare.txt
+            --systems mem0 --llm-url http://127.0.0.1:8080/v1 --llm-model qwen2.5-1.5b --max-minutes 200 \
+            --out memory-bench.json 2> progress.txt | tee compare.txt
           { echo "## Dilmun against memory systems"; echo; cat compare.txt; } >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: memory-systems
+          name: memory-systems-mem0
           path: |
             memory-bench.json
             compare.txt
             server.log
+            progress.txt

@@ -159,7 +159,10 @@
               <div class="big">Needs <span id="gate-k">2</span> distinct sources, or your approval</div>
               <div class="meta">Deny a fact and the gate never promotes it, however many sources agree. Edit one to settle your version instead.</div>
             </div>
-            <button id="btn-gate" class="primary">Run the gate</button>
+            <div class="row tight">
+              <button id="btn-review" class="small">Check claims</button>
+              <button id="btn-gate" class="primary">Run the gate</button>
+            </div>
           </div>
           <div class="sub">Held</div>
           <ul id="held-list" class="list"></ul>
@@ -186,6 +189,8 @@
         <label class="search"><span class="sr">Search memory</span><input id="q" type="search" placeholder="Search entities, attributes, values" autocomplete="off"></label>
         <p id="mem-count" class="meta"></p>
         <ul id="mem-list" class="list facts"></ul>
+        <div id="claims-head" class="sub" hidden>Settled claims</div>
+        <ul id="claims-list" class="list"></ul>
       </div>
     </section>
 

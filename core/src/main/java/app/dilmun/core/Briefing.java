@@ -20,7 +20,7 @@ public final class Briefing {
     private Briefing() {}
 
     /** Kinds of work a model can be sent to do. */
-    public static final String EXTRACT = "extract", READ = "read";
+    public static final String EXTRACT = "extract", READ = "read", VERIFY = "verify";
 
     // ------------------------------------------------------------ extract
 
@@ -86,6 +86,26 @@ public final class Briefing {
         return sb.append('\n').toString();
     }
 
+    // ------------------------------------------------------------ verify
+
+    /** The briefing for a delegated check: one question, answered yes or no. */
+    public static String verify() {
+        return "The arbiters delegate one check to you. You get two sentences from two different sources and a question about them.\n"
+                + "Answer yes only if both sentences state the same thing about the named subject, even in different words. "
+                + "Answer no if they say different things about it, if one only mentions it, or if you are not sure.\n"
+                + "Answer with one word: yes or no.";
+    }
+
+    /** The output grammar for a check: one word. */
+    public static final String VERIFY_GRAMMAR = "root ::= \"yes\" | \"no\"\n";
+
+    /** The question for whether two claims agree. */
+    public static String agree(String a, String b, List<String> about) {
+        String subject = String.join(", ", about).replace('_', ' ');
+        return "Sentence A: " + a.replace('\n', ' ') + "\nSentence B: " + b.replace('\n', ' ')
+                + "\nDo A and B state the same thing about " + subject + "?";
+    }
+
     // ------------------------------------------------------------ read
 
     /**
@@ -124,6 +144,8 @@ public final class Briefing {
         out.add(extract(attributes, null));
         out.add(extractGrammar(attributes));
         out.add(read(new ArrayList<Object>()));
+        out.add(verify());
+        out.add(VERIFY_GRAMMAR);
         return out;
     }
 }

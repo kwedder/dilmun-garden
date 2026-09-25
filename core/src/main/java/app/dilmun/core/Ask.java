@@ -16,6 +16,11 @@ public final class Ask {
 
     /** One fact, readable, numbered for citation, with how sure the memory is of it and its quote. */
     public static String line(int n, Map<String, Object> f) {
+        if ("claim".equals(f.get("kind"))) {
+            long sup = f.get("support") instanceof Number ? ((Number) f.get("support")).longValue() : 1;
+            String how = "settled".equals(f.get("status")) ? plural(sup) : "unconfirmed: " + plural(sup) + ", not yet through the gate";
+            return "[" + n + "] the source says: \"" + f.get("text") + "\" (" + how + ")";
+        }
         long support = f.get("support") instanceof Number ? ((Number) f.get("support")).longValue() : 1;
         boolean held = "held".equals(f.get("status"));
         String how = held ? "unconfirmed: " + support + (support == 1 ? " source" : " sources") + ", not yet through the gate"
@@ -27,6 +32,8 @@ public final class Ask {
     }
 
     /** The arbiters' reading briefing: how the store is laid out, then the facts. */
+    private static String plural(long n) { return n + (n == 1 ? " source" : " sources"); }
+
     public static String system(List<Object> facts) { return Briefing.read(facts); }
 
     /**

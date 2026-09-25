@@ -178,6 +178,12 @@ public final class DevServer {
             case "memory": return engine.memory((String) a.get(0));
             case "held": return engine.held();
             case "denied": return engine.denied();
+            case "claims": return engine.claims((String) a.get(0));
+            case "review": {
+                if (llama == null) throw new Store.Rejected("load the model first");
+                final Llama l = llama;
+                return job("review", () -> engine.review(new Verifier.Model(l), Engine.REVIEW_LIMIT));
+            }
             case "log": return engine.log(((Number) a.get(0)).intValue(), ((Number) a.get(1)).intValue());
             case "tx": return Json.parse(engine.tx((String) a.get(0)));
             case "verify": return engine.verify();

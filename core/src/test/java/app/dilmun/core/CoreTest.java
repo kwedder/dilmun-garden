@@ -68,6 +68,13 @@ public final class CoreTest {
     static final String S1 = "Notes on salicylates.\n- aspirin | treats | fever\n- aspirin | is_a | NSAID\nwillow bark | source_of | salicin\n";
     static final String S2 = "Handbook.\naspirin | treats | fever\nibuprofen | is_a | NSAID\naspirin | date | 1897\n";
 
+    /** Recall's facts, without the claims that follow them. */
+    static List<Object> factsOnly(List<Object> rows) {
+        List<Object> out = new ArrayList<>();
+        for (Object o : rows) if (!"claim".equals(((Map<?, ?>) o).get("kind"))) out.add(o);
+        return out;
+    }
+
     static String show(List<String[]> facts) {
         StringBuilder sb = new StringBuilder();
         for (String[] f : facts) sb.append(Json.canon(Arrays.asList((Object[]) f)));
@@ -404,6 +411,74 @@ public final class CoreTest {
         check(lw.more("1 | a | is_a | b\n2 | c | is_a | d\n") && lw.more("1 | a | is_a | b\n") && !lw.more("1 | a | is_a | b\n"),
                 "a generation that repeats the same line three times is stopped");
 
+        section("claims, reviewed and delegated by the arbiters");
+        String cl = "# Culture\nAnthropology is the study of humanity across time and space. Imagine a village by a river. "
+                + "What do you think culture is? You may know this word. Holism links the economy and religion of a society.\n";
+        List<Object> cls = Engine.claimsOf(cl);
+        check(cls.size() == 2 && cls.toString().contains("study of humanity across time") && cls.toString().contains("Holism links")
+                && !cls.toString().contains("Imagine") && !cls.toString().contains("You may"),
+                "every sentence that states something becomes a claim; questions, headings and asides to the reader don't: " + cls);
+        World cw = new World();
+        cw.src.files.put("one.md", "Anthropology is the study of humanity across time and space. Holism links the economy and religion of a society.\n");
+        cw.src.files.put("two.md", "Anthropology is the study of humanity across time and space. The economy and religion of a society are linked, which anthropologists call holism.\n");
+        cw.e.scan(cw.src);
+        cw.e.extract("src:one.md", cw.src);
+        cw.e.extract("src:two.md", cw.src);
+        cw.e.gate();
+        check(cw.e.claims("").size() == 1 && cw.e.claims("").toString().contains("study of humanity"),
+                "the same sentence in two sources settles as a claim at the gate");
+        final List<String> asked = new ArrayList<>();
+        Verifier yes = new Verifier() {
+            @Override public String id() { return "model:fake-verifier"; }
+            @Override public String judge(String briefing, String question) { asked.add(briefing + "\n" + question); return "yes"; }
+        };
+        long logBefore = cw.e.store().size();
+        Map<String, Object> rv = cw.e.review(yes, 10);
+        check(((Number) rv.get("asked")).longValue() == 1 && ((Number) rv.get("yes")).longValue() == 1 && asked.get(0).contains("Sentence A: ")
+                && asked.get(0).contains("Answer with one word: yes or no") && asked.get(0).contains("economy"),
+                "the arbiters delegate one check: do two sources' claims about the same concepts agree? " + rv);
+        check(cw.e.claims("holism").size() == 2 && cw.e.claims("").size() == 3,
+                "a delegated yes counts as a second source, and both claims settle at the gate: " + cw.e.claims(""));
+        String kinds = "";
+        for (Map<String, Object> t : cw.e.store().valid()) kinds += Tx.kind(t) + " ";
+        check(kinds.contains("delegate") && kinds.contains("verdict") && cw.e.store().size() > logBefore
+                && Json.canon(cw.e.state().verdicts).contains("model:fake-verifier"),
+                "each delegation and each verdict is signed into the log, naming the verifier");
+        check(((Number) cw.e.review(yes, 10).get("asked")).longValue() == 0, "a pair once checked is not asked again");
+        World cw2 = new World();
+        cw2.src.files.putAll(cw.src.files);
+        cw2.e.scan(cw2.src);
+        cw2.e.extract("src:one.md", cw2.src);
+        cw2.e.extract("src:two.md", cw2.src);
+        Verifier waffle = new Verifier() {
+            @Override public String id() { return "model:waffle"; }
+            @Override public String judge(String b, String q) { return "maybe, partly"; }
+        };
+        Map<String, Object> rw = cw2.e.review(waffle, 10);
+        check(((Number) rw.get("refused")).longValue() == 1 && cw2.e.claims("holism").isEmpty(),
+                "an answer that isn't yes or no is refused, recorded, and counts for nothing");
+        List<Object> crec = cw.e.recall("What is holism in a society?", 5);
+        String cline = "";
+        for (int i = 0; i < crec.size(); i++) if ("claim".equals(((Map<?, ?>) crec.get(i)).get("kind"))) cline = Ask.line(i + 1, castMap(crec.get(i)));
+        check(cline.contains("the source says: \"") && cline.contains("holism") && cline.contains("2 sources"),
+                "Ask gets the claims about the question beside the facts, quoted, with their support: " + cline);
+        String denyKey = Grounding.claimId("Holism links the economy and religion of a society.");
+        World cw3 = new World();
+        cw3.src.files.putAll(cw.src.files);
+        cw3.src.files.put("three.md", "Holism links the economy and religion of a society.\n");
+        cw3.e.scan(cw3.src);
+        cw3.e.extract("src:one.md", cw3.src);
+        cw3.e.deny(Collections.singletonList(denyKey));
+        cw3.e.extract("src:three.md", cw3.src);
+        cw3.e.gate();
+        check(cw3.e.claims("holism").isEmpty(), "a denied claim is never settled, however many sources state it");
+        check(State.replay(cw.e.store().valid()).stateHash().equals(cw.e.state().stateHash()),
+                "claims, delegations and verdicts replay from the log to the same state");
+        cw.e.pause();
+        boolean pausedReview = false;
+        try { cw.e.review(yes, 10); } catch (Store.Rejected x) { pausedReview = true; }
+        check(pausedReview, "a paused steward stops reviews too");
+
         section("deny and edit at the gate");
         World dw = new World();
         dw.src.files.put("a.md", "- snakes | is_a | primates\n- snakes | is_a | reptiles\n- anthropology | is_a | vast\n");
@@ -472,7 +547,7 @@ public final class CoreTest {
         hw.e.extract("src:notes.md", hw.src);
         hw.e.extract("src:handbook.md", hw.src);
         hw.e.gate();
-        List<Object> one = hw.e.recall("What is ethnography?", 5);
+        List<Object> one = factsOnly(hw.e.recall("What is ethnography?", 5));
         check(one.size() == 1 && "held".equals(((Map<?, ?>) one.get(0)).get("status")),
                 "with one source, recall still finds the fact, marked as held at the gate");
         check(Ask.line(1, castMap(one.get(0))).contains("unconfirmed: 1 source, not yet through the gate")
@@ -485,7 +560,7 @@ public final class CoreTest {
         hw.e.extract("src:field.md", hw.src, new ModelAgent(new FakeLlm(
                 "ethnography | is_a | research method | Ethnography is a research method based on participant observation\n"),
                 Policy.SCHEMA_ORDER, null));
-        List<Object> byQuote = hw.e.recall("What is participant observation?", 5);
+        List<Object> byQuote = factsOnly(hw.e.recall("What is participant observation?", 5));
         check(byQuote.size() == 1 && byQuote.toString().contains("participant observation"),
                 "a question can match a fact through its quote, not just its words");
 
@@ -501,7 +576,7 @@ public final class CoreTest {
         long factSteps = Collections.frequency(main, "fact");
         main.removeAll(Collections.singletonList("fact"));
         check(main.equals(Arrays.asList("request", "steer", "sign", "commit", "deploy", "read", "propose",
-                "check", "sign", "commit", "answer")), "an extract is traced step by step, in order: " + main);
+                "check", "claims", "sign", "commit", "answer")), "an extract is traced step by step, in order: " + main);
         check(factSteps == 3 && Json.canon(steps).contains("Refused willow bark · source_of · salicin · attribute not in the schema"),
                 "each proposed fact is traced as kept or refused, with the reason (" + factSteps + ")");
         check(nudges[0] == steps.size(), "the listener hears every step as it happens");

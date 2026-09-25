@@ -114,7 +114,7 @@ public final class Grounding {
             "should", "must", "do", "does", "did", "have", "has", "had", "if", "because", "other", "self", "something",
             "anything", "everything", "nothing", "someone", "everyone", "there", "here", "often", "rather", "perhaps",
             "sometimes", "still", "well", "ever", "never", "always", "also", "even", "just", "instead", "yet", "same", "lot",
-            "worth", "kind", "sort", "more", "less", "fewer");
+            "worth", "kind", "sort", "more", "less", "fewer", "up", "out", "off", "down", "away", "back");
 
     /** Words ending in -ly that are things, not manners. */
     private static final Set<String> LY_NOUNS = set("family", "italy", "ally", "assembly", "supply", "anomaly", "monopoly",
@@ -505,6 +505,45 @@ public final class Grounding {
             } else i++;
         }
         return out;
+    }
+
+    // ------------------------------------------------------------ claims
+
+    /** Openings that speak to the reader or set up an example, not state a claim. */
+    private static final Set<String> NOT_A_CLAIM_START = set("imagine", "consider", "think", "let", "let's", "suppose",
+            "remember", "recall", "note", "see", "look", "what", "how", "why", "which", "who", "by");
+
+    /**
+     * Whether a sentence states something an agent could look up and cite: at
+     * least five words, not a question, not addressed to the reader ("you",
+     * "Imagine…"), and naming at least one thing.
+     */
+    public static boolean isClaim(String sentence) {
+        String s = sentence.trim();
+        if (s.isEmpty() || s.startsWith("#") || s.endsWith("?") || s.endsWith(":")) return false;
+        List<String> q = tokens(s);
+        int words = 0;
+        for (String t : q) {
+            if (Character.isLetterOrDigit(t.charAt(0))) words++;
+            if ("you".equals(t) || "your".equals(t) || "you're".equals(t)) return false;
+        }
+        if (words < 5 || NOT_A_CLAIM_START.contains(q.get(0))) return false;
+        return !claimConcepts(s).isEmpty();
+    }
+
+    /** The concepts a claim is about: its menu phrases, as concept keys. */
+    public static List<String> claimConcepts(String sentence) {
+        List<String> out = new ArrayList<>();
+        for (String p : phrases(sentence)) {
+            String c = concept(p, sentence).toLowerCase(Locale.ROOT);
+            if (!c.isEmpty() && !out.contains(c)) out.add(c);
+        }
+        return out;
+    }
+
+    /** A claim's ID: the sentence, normalized, so the same sentence in two sources is one claim. */
+    public static String claimId(String sentence) {
+        return "c:" + Crypto.H(String.join(" ", words(sentence))).substring(0, 24);
     }
 
     // ------------------------------------------------------------ harvest

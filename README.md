@@ -118,6 +118,19 @@ The model never writes to memory. It works under the arbiters, like this:
 5. **Concepts.** Facts that hold up are written as concept keys: "Anthropology is a vast field of study" becomes `anthropology | is_a | field_of_study`. Every source that says it lands on the same key, so support adds up at the gate.
 6. **Reading.** Asked a question, the model first gets the arbiters' reading briefing, which says how the store is laid out. Only then does it see the facts it may use. With **Let it think first** on, its reasoning starts from those facts, one by one.
 
+### Claims, and the checks the arbiters delegate
+
+Most of what a text says doesn't fit a few relations. So the arbiters also keep **claims**: every sentence that states something becomes a claim, with its exact text and the concepts it's about. Questions, headings, references and sentences addressed to the reader are left out. The arbiters write claims from the text themselves, with no model, so they're the same on every phone. On four sections of an anthropology textbook that's 325 claims, against 42 facts.
+
+A claim is settled at the gate once two independent sources stand behind it:
+- the same sentence appears in both, or
+- two sentences from different sources are judged to say the same thing, or
+- you approve it.
+
+To judge that, the arbiters go through the held claims (**Check claims** on the Work tab). They pick pairs from different sources whose words overlap, rare words counting more, and **delegate** each check to the loaded model. Each delegation is signed into the log: the two claims, the question, the briefing it goes under, and an expiry. The model gets a short briefing and answers one word, `yes` or `no`, under an output grammar. The arbiters refuse any other answer and sign the **verdict**. A yes counts as a second source; the model never settles anything itself. Deny works on claims as on facts.
+
+Asked a question, the model gets the matching claims beside the facts, as the source's own sentences, marked settled or unconfirmed.
+
 At the gate you can **Approve**, **Edit** or **Deny** any held fact, and Edit or Deny any settled one. A denied fact is never promoted, however many sources agree. An edited fact is settled as you wrote it, with the original's quote. Both are signed with your key.
 
 ## What's inside

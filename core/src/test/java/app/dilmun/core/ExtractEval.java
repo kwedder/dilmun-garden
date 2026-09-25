@@ -64,6 +64,15 @@ public final class ExtractEval {
                 for (Object raw : (List<Object>) p.get("raw"))
                     System.out.println("RAW " + Json.canon(raw));
             }
+            // the arbiters go through the claims and delegate yes/no checks to the same model
+            System.out.println("\nClaims written: " + e.summary().get("claims"));
+            Map<String, Object> rv = e.review(new Verifier.Model(m), Engine.REVIEW_LIMIT);
+            System.out.println("Review: " + rv);
+            for (Map<String, Object> v : e.state().verdicts) {
+                List<Object> cs = (List<Object>) v.get("claims");
+                System.out.println("VERDICT " + Json.canon(Tx.m("answer", v.get("answer"), "said", v.get("said"),
+                        "a", e.state().claims.get(cs.get(0)).get("text"), "b", e.state().claims.get(cs.get(1)).get("text"))));
+            }
         }
         System.out.println("\nStored, as concepts:");
         for (Object o : e.held()) {

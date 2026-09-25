@@ -4,9 +4,11 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 
@@ -44,6 +46,13 @@ public final class State {
     public final Map<String, At> denials = new HashMap<>();                  // fact key → the steward's latest denial
     public final TreeMap<String, Map<String, Object>> corrections = new TreeMap<>(); // tx id → the steward's corrected fact
     public final Map<String, Object> enlisted = new HashMap<>();              // model id → the briefings' hashes it was last enlisted under
+    public final TreeMap<String, Map<String, Object>> claims = new TreeMap<>();      // claim id → {text, concepts}
+    public final Map<String, TreeSet<String>> claimSources = new HashMap<>();         // claim id → sources that state it
+    public final TreeMap<String, Map<String, Object>> settledClaims = new TreeMap<>(); // claim id → promoted claim
+    public final TreeMap<String, Map<String, Object>> delegations = new TreeMap<>(); // open delegations
+    public final List<Map<String, Object>> verdicts = new ArrayList<>();            // answered delegations, oldest first
+    public final Map<String, TreeSet<String>> agreements = new HashMap<>();          // claim id → claims judged to say the same
+    public final Set<String> asked = new HashSet<>();                                // claim pairs delegated, answered or not
     public final List<Map<String, Object>> decisions = new ArrayList<>();
     public final LinkedHashMap<String, Map<String, Object>> datoms = new LinkedHashMap<>();
     public final Map<String, Object[]> lastEvent = new HashMap<>();          // fact key → {op, At}
@@ -121,6 +130,27 @@ public final class State {
                 deny((String) p.get("from"), at);
                 break;
             }
+            case "delegate": {
+                Map<String, Object> d = new TreeMap<>(p);
+                d.put("portal", Tx.portal(tx));
+                delegations.put((String) p.get("id"), d);
+                asked.add(pairKey((List<Object>) p.get("claims")));
+                break;
+            }
+            case "verdict": {
+                Map<String, Object> d = delegations.remove(p.get("delegation"));
+                Map<String, Object> v = new TreeMap<>(p);
+                v.put("tx", Tx.id(tx));
+                if (d != null) v.put("claims", d.get("claims"));
+                verdicts.add(v);
+                if (d != null && "yes".equals(p.get("answer"))) {
+                    List<Object> cs = (List<Object>) d.get("claims");
+                    String a = (String) cs.get(0), b = (String) cs.get(1);
+                    agreements.computeIfAbsent(a, x -> new TreeSet<>()).add(b);
+                    agreements.computeIfAbsent(b, x -> new TreeSet<>()).add(a);
+                }
+                break;
+            }
             case "enlist":
                 enlisted.put((String) p.get("model"), p.get("briefings"));
                 break;
@@ -179,11 +209,33 @@ public final class State {
                         union((String) d.get("e"), identId((String) d.get("a"), d.get("v")));
                     event(factKey(Tx.tier(tx), d), "assert", at);
                 }
+                Object cl = p.get("claims");
+                if (cl instanceof List)
+                    for (Object o : (List<Object>) cl) {
+                        Map<String, Object> c = (Map<String, Object>) o;
+                        String id = (String) c.get("id");
+                        if ("promote".equals(k)) { settledClaims.put(id, new TreeMap<>(c)); continue; }
+                        if (!claims.containsKey(id)) claims.put(id, Tx.m("text", c.get("text"), "concepts", c.get("concepts")));
+                        claimSources.computeIfAbsent(id, x -> new TreeSet<>()).add(String.valueOf(h.get("source")));
+                    }
                 break;
             }
             default:
                 break;   // genesis, admit: trust lives in the store
         }
+    }
+
+    static String pairKey(List<Object> ids) {
+        String a = String.valueOf(ids.get(0)), b = String.valueOf(ids.get(1));
+        return a.compareTo(b) < 0 ? a + "|" + b : b + "|" + a;
+    }
+
+    /** The distinct sources behind a claim: its own, and those of the claims judged to say the same. */
+    public Set<String> claimSupport(String id) {
+        TreeSet<String> out = new TreeSet<>();
+        if (claimSources.containsKey(id)) out.addAll(claimSources.get(id));
+        if (agreements.containsKey(id)) for (String o : agreements.get(id)) if (claimSources.containsKey(o)) out.addAll(claimSources.get(o));
+        return out;
     }
 
     private void deny(String key, At at) {
@@ -319,6 +371,7 @@ public final class State {
         // only when used, so a log without them keeps the state hash it always had
         if (!denials.isEmpty()) all.put("denials", new ArrayList<>(new TreeSet<>(denials.keySet())));
         if (!corrections.isEmpty()) all.put("corrections", new ArrayList<>(corrections.keySet()));
+        if (!settledClaims.isEmpty()) all.put("claims", new ArrayList<>(settledClaims.keySet()));
         return Crypto.H(all);
     }
 }

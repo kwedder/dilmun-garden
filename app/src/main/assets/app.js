@@ -368,6 +368,10 @@
       const box = el("div", "facts-used");
       a.facts.forEach((f, i) => {
         const held = f.status === "held";
+        if (f.kind === "claim") {
+          box.appendChild(el("div", held ? "held" : null, "[" + (i + 1) + "] “" + f.text + "” · " + (held ? "unconfirmed, " : "") + plural(f.support, "source", "sources")));
+          return;
+        }
         const how = held ? "unconfirmed, " + plural(f.support, "source", "sources") : f.support >= 2 ? plural(f.support, "source", "sources") : "approved";
         const line = el("div", held ? "held" : null, "[" + (i + 1) + "] " + f.entity + " " + String(f.a).replace(/_/g, " ") + " " + f.v + " · " + how);
         if (f.quote) line.title = "Quote: " + f.quote;
@@ -614,6 +618,8 @@
       : "Running · " + plural(s.open || 0, "open directive", "open directives");
     $("btn-pause").textContent = s.paused ? "Resume" : "Pause";
     $("gate-k").textContent = s.k || 2;
+    $("btn-review").title = plural(s.claims || 0, "claim", "claims") + " written · " + plural(s.settled_claims || 0, "settled", "settled")
+      + " · " + plural(s.verdicts || 0, "check", "checks") + " answered";
 
     const held = $("held-list"); held.innerHTML = "";
     const hs = ok(call("held")) || [];
@@ -722,6 +728,22 @@
     const n = ok(call("reconcile"));
     if (n !== undefined) { toast(n ? plural(n, "directive", "directives") + " expired" : "Nothing stale"); refresh(); }
   });
+  /* The arbiters go through the held claims and delegate yes/no checks to the loaded model. */
+  $("btn-review").addEventListener("click", () => {
+    const b = $("btn-review");
+    b.disabled = true;
+    job("review", {
+      done: r => {
+        b.disabled = false;
+        toast(r.asked ? "Arbiters delegated " + plural(r.asked, "check", "checks") + " · " + r.yes + " agree, " + r.no + " don't"
+          + (r.refused ? ", " + r.refused + " refused" : "") + (r.settled ? " · " + plural(r.settled, "promotion", "promotions") : "")
+          : "Nothing to check: no two sources' claims share enough concepts yet");
+        refresh();
+      },
+      error: () => { b.disabled = false; }
+    });
+  });
+
   $("btn-gate").addEventListener("click", () => {
     const n = ok(call("gate"));
     if (n !== undefined) { toast(n ? plural(n, "fact", "facts") + " promoted to culture" : "Nothing new has enough support"); refresh(); }
@@ -730,9 +752,27 @@
   /* ------------------------------------------------------------ memory */
   let qTimer = 0;
   $("q").addEventListener("input", () => { clearTimeout(qTimer); qTimer = setTimeout(renderMemory, 160); });
+  function renderClaims() {
+    const list = $("claims-list"); list.innerHTML = "";
+    const cs = ok(call("claims", $("q").value), true) || [];
+    $("claims-head").hidden = !cs.length;
+    cs.slice(0, 200).forEach(c => {
+      const row = li(), main = el("div", "main");
+      main.appendChild(el("div", "t", "“" + c.text + "”"));
+      main.appendChild(el("div", "m", (c.concepts || []).slice(0, 6).join(" · ").replace(/_/g, " ")));
+      row.appendChild(main);
+      row.appendChild(el("span", "badge", plural(c.support, "source", "sources")));
+      const deny = el("button", "small", "Deny");
+      deny.addEventListener("click", () => { if (ok(call("deny", c.key)) !== undefined) { toast("Denied and signed · the claim is withdrawn"); refresh(); } });
+      row.appendChild(deny);
+      list.appendChild(row);
+    });
+  }
+
   function renderMemory() {
     const list = $("mem-list"); list.innerHTML = "";
     const rows = ok(call("memory", $("q").value)) || [];
+    renderClaims();
     $("mem-count").textContent = plural(rows.length, "settled fact", "settled facts");
     if (!rows.length) {
       empty(list, $("q").value ? "No match." : "Nothing settled yet. Extract from two sources that agree, then run the gate on the Work tab.");

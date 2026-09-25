@@ -30,6 +30,7 @@ import app.dilmun.core.ModelAgent;
 import app.dilmun.core.Policy;
 import app.dilmun.core.Store;
 import app.dilmun.core.Tx;
+import app.dilmun.core.Verifier;
 
 /**
  * What the screens can ask for. The screens are HTML in a WebView; every call
@@ -204,6 +205,19 @@ final class Bridge {
     @JavascriptInterface public String memory(String query) { return call(() -> engine().memory(query)); }
     @JavascriptInterface public String held() { return call(() -> engine().held()); }
     @JavascriptInterface public String denied() { return call(() -> engine().denied()); }
+    @JavascriptInterface public String claims(String query) { return call(() -> engine().claims(query)); }
+
+    /**
+     * The arbiters go through the held claims and delegate yes/no checks to the
+     * loaded model. Runs as a job; the result says how many were asked and answered.
+     */
+    @JavascriptInterface public String review() {
+        return call(() -> {
+            final Llama l = model.llama();
+            if (l == null) throw new Store.Rejected(model.file() == null ? "no model yet: import one first" : "load the model first");
+            return job("review", () -> engine().review(new Verifier.Model(l), Engine.REVIEW_LIMIT));
+        });
+    }
     @JavascriptInterface public String log(int offset, int limit) { return call(() -> engine().log(offset, limit)); }
     @JavascriptInterface public String tx(String id) { return call(() -> Json.parse(engine().tx(id))); }
     @JavascriptInterface public String verify() { return call(() -> engine().verify()); }

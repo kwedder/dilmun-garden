@@ -11,6 +11,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.TreeSet;
 
 /**
  * One portal on one device: its store, its arbiters, and (in this build) the
@@ -362,12 +363,34 @@ public final class Engine {
             note("fact", "…and " + plural(facts.size() - FACT_NOTES, "more fact", "more facts") + " checked", Tx.m("more", (long) (facts.size() - FACT_NOTES)));
         note("check", "Checked quotes, grounding, schema, tools, budget: " + accepted + " kept · " + rejected.size() + " refused",
                 Tx.m("accepted", accepted, "rejected", (long) rejected.size()));
+        List<Object> claims = claimsOf(text);
+        note("claims", "Arbiters wrote " + plural(claims.size(), "claim", "claims") + " from the source's sentences",
+                Tx.m("claims", (long) claims.size()));
         Map<String, Object> tx = commit(portalKey, portal, "assert", "episode:" + did,
-                Tx.m("proposal", proposal, "datoms", datoms, "rejected", rejected),
+                Tx.m("proposal", proposal, "datoms", datoms, "rejected", rejected, "claims", claims),
                 Tx.m("directive", did, "agent", with.id(), "skill", skill, "skill_version", version,
                         "skill_current", st.skills.get(skill).lastKey(), "model_hash", with.id(),
                         "source", source, "source_hash", d.get("source_hash")));
         return Tx.m("tx", Tx.id(tx), "accepted", accepted, "rejected", rejected, "agent", with.id());
+    }
+
+    /**
+     * Every sentence of a source that states something, as a claim: its exact
+     * text and place, and the concepts it's about. Written by the arbiters from
+     * the text itself, with no agent, so it doesn't depend on any model.
+     */
+    static List<Object> claimsOf(String text) {
+        List<Object> out = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (int[] x : ModelAgent.readable(text, 0, text.length())) {
+            String s = text.substring(x[0], x[1]);
+            if (!Grounding.isClaim(s)) continue;
+            String id = Grounding.claimId(s);
+            if (!seen.add(id)) continue;
+            out.add(Tx.m("id", id, "text", s, "start", (long) x[0], "end", (long) x[1],
+                    "concepts", new ArrayList<Object>(Grounding.claimConcepts(s))));
+        }
+        return out;
     }
 
     /** Facts checked one by one in the trace; the rest are summed up, so a big result can't flood it. */
@@ -497,11 +520,33 @@ public final class Engine {
             out.add(x[1]);
             if ("settled".equals(castMap(x[1]).get("status"))) settled++; else held++;
         }
-        note("recall", "Ask read memory: " + plural(settled, "settled fact", "settled facts") + " and "
-                        + plural(held, "unconfirmed fact", "unconfirmed facts") + " match the question",
-                Tx.m("settled", settled, "held", held));
+        List<Object[]> cs = new ArrayList<>();                         // then the claims about the question's concepts
+        for (Map.Entry<String, Map<String, Object>> e : st.claims.entrySet()) {
+            if (st.denied(e.getKey())) continue;
+            Set<String> cw = words(String.valueOf(e.getValue().get("text")));
+            double sc = 0;
+            for (String w : words) if (cw.contains(w)) sc += 1;
+            for (Object c : (List<?>) e.getValue().get("concepts")) for (String w : String.valueOf(c).split("_")) if (words.contains(w)) sc += 1;
+            if (sc >= 2) cs.add(new Object[]{sc + (st.settledClaims.containsKey(e.getKey()) ? 0.5 : 0), e.getKey()});
+        }
+        Collections.sort(cs, (x, y) -> Double.compare((Double) y[0], (Double) x[0]));
+        long claimsIn = 0;
+        for (Object[] x : cs) {
+            if (claimsIn >= RECALL_CLAIMS) break;
+            String id = (String) x[1];
+            boolean ok = st.settledClaims.containsKey(id);
+            out.add(Tx.m("kind", "claim", "key", id, "text", st.claims.get(id).get("text"), "status", ok ? "settled" : "held",
+                    "support", (long) st.claimSupport(id).size(), "quote", ""));
+            claimsIn++;
+        }
+        note("recall", "Ask read memory: " + plural(settled, "settled fact", "settled facts") + ", "
+                        + plural(held, "unconfirmed fact", "unconfirmed facts") + " and " + plural(claimsIn, "claim", "claims") + " match the question",
+                Tx.m("settled", settled, "held", held, "claims", claimsIn));
         return out;
     }
+
+    /** Claims given to Ask beside the facts, at most. */
+    static final int RECALL_CLAIMS = 4;
 
     /** Longest quote shown to the model with a recalled fact. */
     static final int RECALL_QUOTE = 200;
@@ -621,9 +666,36 @@ public final class Engine {
             n++;
         }
         n += promoteCorrections(st, promoted);
+        n += promoteClaims(state());
         long waiting = held().size();
         if (waiting > 0) note("hold", "Gate held " + plural(waiting, "fact", "facts") + " for more sources or approval", Tx.m("held", waiting));
         return n;
+    }
+
+    /**
+     * A claim is settled once two distinct sources stand behind it: the same
+     * sentence in both, or two sentences a delegated check judged to say the
+     * same thing. Or once the steward approves it. A denied claim never is.
+     */
+    private long promoteClaims(State st) {
+        List<Object> ready = new ArrayList<>();
+        for (Map.Entry<String, Map<String, Object>> e : st.claims.entrySet()) {
+            String id = e.getKey();
+            if (st.settledClaims.containsKey(id) || st.denied(id)) continue;
+            Set<String> support = st.claimSupport(id);
+            boolean approved = st.approved(id);
+            if (support.size() < Policy.GATE_K && !approved) continue;
+            Map<String, Object> c = e.getValue();
+            ready.add(Tx.m("id", id, "text", c.get("text"), "concepts", c.get("concepts"), "support", (long) support.size(),
+                    "agreed", new ArrayList<Object>(st.agreements.containsKey(id) ? st.agreements.get(id) : new TreeSet<String>()),
+                    "rule", approved && support.size() < Policy.GATE_K ? "approved" : "sources"));
+        }
+        if (ready.isEmpty()) return 0;
+        note("promote", "Gate: " + plural(ready.size(), "claim", "claims") + " settled by two sources or approval",
+                Tx.m("claims", (long) ready.size()));
+        commit(portalKey, portal, "promote", "culture", Tx.m("datoms", new ArrayList<Object>(), "claims", ready,
+                "decision", Tx.m("claims", (long) ready.size(), "rule", "claims")), null);
+        return ready.size();
     }
 
     /** The steward's corrected facts go to culture as written, with the original's quote. */
@@ -773,6 +845,141 @@ public final class Engine {
         return out;
     }
 
+    // ------------------------------------------------------------ review: the arbiters delegate checks
+
+    /** Checks the arbiters delegate in one review, at most. */
+    public static final int REVIEW_LIMIT = 24;
+    /** How alike two claims' words must be (0 to 1, rarer words weighing more) to be worth a check. */
+    static final double REVIEW_SIMILAR = 0.3;
+
+    /** Cosine similarity of two word sets, each word weighted by how rare it is across the claims. */
+    static double similarity(Set<String> a, Set<String> b, Map<String, Integer> df, int total) {
+        double shared = 0, na = 0, nb = 0;
+        for (String w : a) { double x = idf(w, df, total); na += x * x; if (b.contains(w)) shared += x * x; }
+        for (String w : b) { double x = idf(w, df, total); nb += x * x; }
+        return na == 0 || nb == 0 ? 0 : shared / Math.sqrt(na * nb);
+    }
+
+    private static double idf(String w, Map<String, Integer> df, int total) {
+        Integer n = df.get(w);
+        return Math.log(1 + total / (double) (n == null ? 1 : n));
+    }
+
+    /**
+     * The arbiters go through the held claims and delegate what they can't
+     * decide by rule. Today that's one kind of check: do two claims from
+     * different sources, about the same concepts, say the same thing? Each
+     * check is a signed delegation (the two claims, the question, the briefing
+     * it goes under, an expiry); the verifier answers yes or no; the arbiters
+     * refuse anything else and sign the verdict. A yes counts toward the gate;
+     * the verifier never settles anything itself. The verifier runs outside the
+     * engine's lock, like an extraction agent.
+     */
+    public Map<String, Object> review(Verifier v, int limit) {
+        List<Map<String, Object>> tasks = delegate(v.id(), Math.min(limit, REVIEW_LIMIT));
+        long yes = 0, no = 0, refused = 0;
+        String brief = Briefing.verify();
+        for (Map<String, Object> t : tasks) {
+            String answer = v.judge(brief, (String) t.get("question"));             // the only model call
+            String r = verdict((String) t.get("id"), answer, v.id());
+            if ("yes".equals(r)) yes++; else if ("no".equals(r)) no++; else refused++;
+        }
+        long settled = tasks.isEmpty() ? 0 : gate();
+        return Tx.m("asked", (long) tasks.size(), "yes", yes, "no", no, "refused", refused, "settled", settled);
+    }
+
+    /** Plans a review: the pairs worth checking, most shared concepts first, each delegated in the log. */
+    private synchronized List<Map<String, Object>> delegate(String verifier, int limit) {
+        return request("review claims", false, () -> {
+            live();
+            State st = state();
+            notPaused(st);
+            List<Object[]> pairs = new ArrayList<>();
+            List<String> ids = new ArrayList<>();
+            for (String id : st.claims.keySet()) if (!st.settledClaims.containsKey(id) && !st.denied(id)) ids.add(id);
+            Map<String, List<String>> byConcept = new TreeMap<>();              // only claims that share a concept are compared
+            for (String id : ids)
+                for (Object c : (List<?>) st.claims.get(id).get("concepts"))
+                    byConcept.computeIfAbsent(String.valueOf(c), x -> new ArrayList<>()).add(id);
+            // Which pairs are worth a check: claims that share a concept, and whose words overlap enough,
+            // rarer words counting more (so "people", in many claims, counts for little).
+            int total = Math.max(1, ids.size());
+            Map<String, Set<String>> wordsOf = new HashMap<>();
+            Map<String, Integer> df = new HashMap<>();
+            for (String id : ids) {
+                Set<String> ws = new HashSet<>();
+                for (String w : Grounding.words(String.valueOf(st.claims.get(id).get("text")))) if (!STOP.contains(w) && w.length() > 2) ws.add(Grounding.stem(w));
+                wordsOf.put(id, ws);
+                for (String w : ws) df.merge(w, 1, Integer::sum);
+            }
+            Set<String> considered = new HashSet<>();
+            for (List<String> group : byConcept.values()) {
+                if (group.size() > 60) continue;                                   // too common a concept to pair by
+                for (int i = 0; i < group.size(); i++) for (int j = i + 1; j < group.size(); j++) {
+                    String a = group.get(i), b = group.get(j);
+                    String key = State.pairKey(Arrays.<Object>asList(a, b));
+                    if (!considered.add(key) || st.asked.contains(key)) continue;
+                    if (!Collections.disjoint(st.claimSources.get(a), st.claimSources.get(b))) continue;   // same source: not independent
+                    double sim = similarity(wordsOf.get(a), wordsOf.get(b), df, total);
+                    if (sim < REVIEW_SIMILAR) continue;
+                    List<Object> shared = new ArrayList<>((List<?>) st.claims.get(a).get("concepts"));
+                    shared.retainAll((List<?>) st.claims.get(b).get("concepts"));
+                    pairs.add(new Object[]{sim, a, b, shared});
+                }
+            }
+            Collections.sort(pairs, (x, y) -> !x[0].equals(y[0]) ? Double.compare((Double) y[0], (Double) x[0])
+                    : ((String) x[1] + x[2]).compareTo((String) y[1] + y[2]));
+            List<Map<String, Object>> out = new ArrayList<>();
+            String briefing = Briefing.hash(Briefing.verify());
+            for (Object[] p : pairs) {
+                if (out.size() >= limit) break;
+                String a = (String) p[1], b = (String) p[2];
+                @SuppressWarnings("unchecked") List<String> about = (List<String>) (List<?>) p[3];
+                String q = Briefing.agree((String) st.claims.get(a).get("text"), (String) st.claims.get(b).get("text"), about);
+                String id = "g:" + Crypto.H(Arrays.asList(portal, a, b, store.tip(portal))).substring(0, 24);
+                Map<String, Object> d = Tx.m("id", id, "task", "agree", "claims", new ArrayList<Object>(Arrays.asList(a, b)),
+                        "about", new ArrayList<Object>(about), "question", q, "briefing", briefing, "verifier", verifier,
+                        "expires", nextHlc()[0] + Policy.TTL_MS);
+                commit(portalKey, portal, "delegate", "system", d, null);
+                out.add(d);
+            }
+            note("delegate", "Arbiters reviewed " + plural(ids.size(), "held claim", "held claims") + " · delegated "
+                    + plural(out.size(), "check", "checks"), Tx.m("held", (long) ids.size(), "delegated", (long) out.size()));
+            return out;
+        });
+    }
+
+    /** Records a verifier's answer. Only "yes" or "no", to an open delegation before its expiry, is taken. */
+    private synchronized String verdict(String delegation, String answer, String verifier) {
+        return request("record a verdict", false, () -> {
+            live();
+            State st = state();
+            Map<String, Object> d = st.delegations.get(delegation);
+            if (d == null || !portal.equals(d.get("portal"))) throw new Store.Rejected("no such open delegation");
+            String a = answer == null ? "" : answer.trim().toLowerCase(Locale.ROOT);
+            boolean late = nextHlc()[0] >= ((Number) d.get("expires")).longValue();
+            String kept = late ? "late" : "yes".equals(a) || "no".equals(a) ? a : "refused";
+            commit(portalKey, portal, "verdict", "system", Tx.m("delegation", delegation, "answer", kept,
+                    "said", a.length() > 40 ? a.substring(0, 40) : a, "verifier", verifier), null);
+            note("verdict", "Verifier answered " + (kept.equals(a) ? a : "\"" + a + "\", refused") + " · claims agree: " + kept,
+                    Tx.m("answer", kept));
+            return kept;
+        });
+    }
+
+    /** Settled claims, readable, optionally filtered. */
+    public synchronized List<Object> claims(String query) {
+        State st = state();
+        String q = query == null ? "" : query.trim().toLowerCase(Locale.ROOT);
+        List<Object> out = new ArrayList<>();
+        for (Map.Entry<String, Map<String, Object>> e : st.settledClaims.entrySet()) {
+            String text = String.valueOf(e.getValue().get("text"));
+            if (!q.isEmpty() && !text.toLowerCase(Locale.ROOT).contains(q)) continue;
+            out.add(Tx.m("key", e.getKey(), "text", text, "support", e.getValue().get("support"), "concepts", e.getValue().get("concepts")));
+        }
+        return out;
+    }
+
     // ------------------------------------------------------------ steward
 
     public synchronized void approve(List<String> keys) {
@@ -840,6 +1047,9 @@ public final class Engine {
                 "open", mine,
                 "culture", (long) memory("").size(),
                 "held", (long) held().size(),
+                "claims", (long) st.claims.size(),
+                "settled_claims", (long) st.settledClaims.size(),
+                "verdicts", (long) st.verdicts.size(),
                 "results", (long) st.results.size(),
                 "skill", "ingest v" + st.skills.get("ingest").lastKey(),
                 "tools", new ArrayList<Object>(st.skills.get("ingest").lastEntry().getValue()),

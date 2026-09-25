@@ -794,7 +794,12 @@ function hops(ev){
     case "fact":         return { hops:[], node:"arbiters", tone: ev.more ? null : ev.kept ? "good" : "bad" };
     case "bulk":         return { hops:[], node:"ui", tone: ev.event === "done" ? "good" : null };
     case "model":        return { hops:[], node:"agent" };
-    case "recall":       return { hops:[], node:"culture", tone: ev.settled + ev.held > 0 ? "good" : null };
+    case "recall":       return { hops:[], node:"culture", tone: ev.settled + ev.held + (ev.claims || 0) > 0 ? "good" : null };
+    // claims, and the checks the arbiters delegate
+    case "claims":       return { hops:[], node:"arbiters", tone: ev.claims > 0 ? "good" : null };
+    case "enlist":       return { hops:[["d"]], node:"agent" };
+    case "delegate":     return { hops:[["d"]], node:"agent" };
+    case "verdict":      return { hops:[["p"]], node:"arbiters", tone: ev.answer === "yes" ? "good" : ev.answer === "no" ? null : "bad" };
     default:        return { hops:[], node:"arbiters" };
   }
 }

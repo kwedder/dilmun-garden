@@ -66,14 +66,23 @@ public final class Llama implements AutoCloseable, Llm {
      * thinking block when think is on), and the returned text includes it.
      * @param think let a reasoning model think before answering
      */
-    @Override public synchronized String generate(List<String[]> messages, int maxTokens, float temp, boolean think, Sink sink) {
+    @Override public String generate(List<String[]> messages, int maxTokens, float temp, boolean think, Sink sink) {
+        return generate(messages, maxTokens, temp, think, null, sink);
+    }
+
+    /**
+     * As above, with an output grammar (GBNF, rule "root"): every token the model
+     * writes must keep the output inside it. Null or empty for none.
+     */
+    @Override public synchronized String generate(List<String[]> messages, int maxTokens, float temp, boolean think, String grammar, Sink sink) {
         check();
         byte[][] roles = new byte[messages.size()][], contents = new byte[messages.size()][];
         for (int i = 0; i < messages.size(); i++) {
             roles[i] = messages.get(i)[0].getBytes(StandardCharsets.UTF_8);
             contents[i] = messages.get(i)[1].getBytes(StandardCharsets.UTF_8);
         }
-        byte[] out = nativeGenerate(handle, roles, contents, maxTokens, temp, think, sink);
+        byte[] out = nativeGenerate(handle, roles, contents, maxTokens, temp, think,
+                grammar == null || grammar.isEmpty() ? null : grammar.getBytes(StandardCharsets.UTF_8), sink);
         if (out == null) throw new IllegalStateException("the model could not read the prompt: " + stats().get("stop"));
         return new String(out, StandardCharsets.UTF_8);
     }
@@ -109,7 +118,7 @@ public final class Llama implements AutoCloseable, Llm {
     private static native int nativeCountTokens(long handle, byte[] text);
     private static native void nativeStop(long handle);
     private static native byte[] nativeGenerate(long handle, byte[][] roles, byte[][] contents,
-                                                int maxTokens, float temp, boolean think, Sink sink);
+                                                int maxTokens, float temp, boolean think, byte[] grammar, Sink sink);
     private static native byte[] nativeStats(long handle);
     private static native void nativeFree(long handle);
 }

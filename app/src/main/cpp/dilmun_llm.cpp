@@ -182,7 +182,7 @@ Java_app_dilmun_core_Llama_nativeStop(JNIEnv *, jclass, jlong handle) {
 JNIEXPORT jbyteArray JNICALL
 Java_app_dilmun_core_Llama_nativeGenerate(JNIEnv * env, jclass, jlong handle,
                                          jobjectArray roles, jobjectArray contents,
-                                         jint max_tokens, jfloat temp, jboolean think, jobject sink) {
+                                         jint max_tokens, jfloat temp, jboolean think, jbyteArray grammar, jobject sink) {
     auto * h = reinterpret_cast<Handle *>(handle);
     h->stop = false;
     h->prompt_tokens = h->gen_tokens = 0;
@@ -269,6 +269,19 @@ Java_app_dilmun_core_Llama_nativeGenerate(JNIEnv * env, jclass, jlong handle,
 
     const llama_vocab * vocab = llama_model_get_vocab(h->model);
     llama_sampler * smpl = llama_sampler_chain_init(llama_sampler_chain_default_params());
+    // An output grammar from the arbiters: the model can only write what their rules could accept.
+    if (grammar) {
+        std::string g = bytes_of(env, grammar);
+        if (!g.empty()) {
+            llama_sampler * gs = llama_sampler_init_grammar(vocab, g.c_str(), "root");
+            if (!gs) {
+                llama_sampler_free(smpl);
+                h->stop_reason = "the output grammar did not parse";
+                return nullptr;
+            }
+            llama_sampler_chain_add(smpl, gs);
+        }
+    }
     // A repetition penalty helps free writing, but a list of facts repeats "|",
     // attributes and names on every line by design; penalising those makes a
     // small model stop early or garble the format. So greedy decoding (temp 0,

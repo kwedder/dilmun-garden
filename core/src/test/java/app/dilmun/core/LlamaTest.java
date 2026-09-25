@@ -61,6 +61,12 @@ public final class LlamaTest {
             String plain = m.generate(pre, 10, 0f, false, null);
             check(plain.startsWith("The memory says:") && !plain.contains("<think>"), "without think, the reply simply starts with the prefill");
 
+            String yn = m.generate(msgs, 8, 0.7f, false, "root ::= \"yes\" | \"no\"", null);
+            check(yn.equals("yes") || yn.equals("no"), "an output grammar holds the model to it (" + yn + ")");
+            boolean badGrammar = false;
+            try { m.generate(msgs, 8, 0f, false, "root ::= (", null); } catch (IllegalStateException e) { badGrammar = e.getMessage().contains("grammar"); }
+            check(badGrammar, "a grammar that doesn't parse is refused, not ignored");
+
             final int[] seen = {0};
             m.generate(msgs, 200, 0.7f, false, piece -> ++seen[0] < 5);
             check(seen[0] == 5 && "stopped".equals(m.stats().get("stop")), "the sink can stop generation");

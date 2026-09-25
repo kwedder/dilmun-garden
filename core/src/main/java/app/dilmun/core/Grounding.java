@@ -74,6 +74,10 @@ public final class Grounding {
 
     static final Set<String> LINK_MOD = union(LINK, MODIFIERS);
 
+    /** What makes "E ... V" a definition: a word that defines, not a comma. */
+    static final Set<String> DEFINES = set("is", "are", "was", "were", "means", "mean", "refers", "defined", "called", "termed",
+            "denotes", "describe", "describes", ":", "—", "–");
+
     /** A singular "is" needs one of these before its value, or the value is an adjective: "anthropology is vast". */
     static final Set<String> NOUN_CUE = set(
             "a", "an", "the", "one", "type", "kind", "form", "sort", "class", "member", "variety", "example",
@@ -141,9 +145,9 @@ public final class Grounding {
     static {
         CUES.put("part_of", set("part", "parts", "member", "members", "among", "one", "include", "includes", "included", "including",
                 "comprise", "comprises", "comprised", "comprising", "consist", "consists", "belong", "belongs", "component",
-                "components", "subfield", "subfields", "branch", "branches", "within", "division", "section", ":"));
+                "components", "subfield", "subfields", "branch", "branches", "within", "division", "section"));
         CUES.put("contains", set("contain", "contains", "contained", "containing", "include", "includes", "included", "including",
-                "comprise", "comprises", "consist", "consists", "has", "have", "with", "hold", "holds", "house", "houses", ":"));
+                "comprise", "comprises", "consist", "consists", "has", "have", "with", "hold", "holds", "house", "houses"));
         CUES.put("causes", set("cause", "causes", "caused", "causing", "lead", "leads", "led", "result", "results", "resulted",
                 "resulting", "produce", "produces", "produced", "trigger", "triggers", "triggered", "drive", "drives", "drove",
                 "due", "because", "responsible", "effect", "effects", "create", "creates", "created", "shape", "shapes",
@@ -200,10 +204,28 @@ public final class Grounding {
         }
         for (int a : es) for (int b : vs) {
             int lo = Math.min(a + e.size(), b + v.size()), hi = Math.max(a, b);
+            if (hi - lo > NEAR) continue;                             // too far apart to be one statement
+            if ("located_in".equals(attribute)) {                    // "E in V", "E is located in V": the place right after its link
+                List<String> between = q.subList(lo, hi);
+                if (b > a && links(between, LOCATED_LINK, cues)) return null;
+                // "the Wauja, an indigenous group in Brazil": an apposition, then the place
+                int k = between.size();
+                while (k > 0 && LOCATED_LINK.contains(between.get(k - 1))) k--;
+                if (b > a && k < between.size() && cues.contains(between.get(between.size() - 1 < k ? k : between.size() - 1))
+                        && k >= 2 && ",".equals(between.get(0)) && ARTICLES.contains(between.get(1))) return null;
+                continue;
+            }
             for (int i = lo; i < hi; i++) if (cues.contains(q.get(i))) return null;
         }
         return "the sentence doesn't say " + attribute.replace('_', ' ') + ": no word for it between " + entity.trim() + " and " + value.trim();
     }
+
+    /** Most words between entity and value for a cue to join them. */
+    static final int NEAR = 8;
+
+    private static final Set<String> LOCATED_LINK = set("is", "are", "was", "were", "located", "found", "based", "situated",
+            "lies", "lie", "in", "at", "on", "near", "within", "inside", "the", ",", "of", "northern", "southern", "eastern",
+            "western", "central", "works", "work", "worked", "working", "lives", "live", "lived", "living", "born", "stationed");
 
     /** Why a phrase isn't a thing (a pronoun, a clause, a date that isn't one), or null. */
     private static String notAThing(List<String> w, String attribute, boolean isValue) {
@@ -270,7 +292,9 @@ public final class Grounding {
         boolean isA = "is_a".equals(attribute);
         if (b >= a + en) {                                            // E ... V
             List<String> between = q.subList(a + en, b);
-            if (links(between, LINK_MOD, COPULA) && endsPhrase(q, b + vn)) {
+            boolean defines = false;                                  // "freedom, equal opportunity" is a list, not a definition
+            for (String t : between) if (DEFINES.contains(t)) defines = true;
+            if (links(between, LINK_MOD, COPULA) && endsPhrase(q, b + vn) && (isA || defines)) {
                 boolean singular = between.contains("is") || between.contains("was");
                 boolean noun = false;
                 for (String t : between) if (NOUN_CUE.contains(t)) noun = true;
@@ -283,7 +307,9 @@ public final class Grounding {
             if (isA && links(between, LINK_BACK, CUE_BACK)) return true;        // "NSAIDs such as ibuprofen"
             if (isA && suchAsList(between)) return true;                        // "…, such as political science, religious studies, and economics"
             if (links(between, NAMING_LINK, NAMING)) return true;               // "this practice is called fieldwork"
-            if (!isA && between.size() == 1 && ":".equals(between.get(0))) return true; // "...distinctive cultures: holism"
+            if (!isA && between.size() == 1 && ":".equals(between.get(0)) && b > 0
+                    && set("word", "term", "name", "concept", "idea", "notion", "label").contains(q.get(b - 1 < 0 ? 0 : Math.max(0, b - 1)))) return true;
+            if (!isA && between.size() == 1 && ":".equals(between.get(0)) && vn >= 3) return true; // "...interrelate to form distinctive cultures: holism"
             if (between.isEmpty()) {
                 int c = b - 1;
                 while (c >= 0 && (DETERMINERS.contains(q.get(c)) || MODIFIERS.contains(q.get(c)))) c--;
@@ -407,6 +433,73 @@ public final class Grounding {
             sb.append(raw.get(i));
         }
         return sb.toString();
+    }
+
+    // ------------------------------------------------------------ menu
+
+    /** Letters for a sentence's phrase menu. */
+    public static final String LETTERS = "abcdefgh";
+
+    /** Verbs that end a phrase: the ones textbooks and papers use to report ("Susan Bayly describes how"). */
+    static final Set<String> VERBS = set("describes", "describe", "described", "focuses", "focus", "argues", "argue", "argued",
+            "explores", "explore", "examines", "examine", "shows", "show", "suggests", "suggest", "notes", "note", "claims", "claim",
+            "finds", "find", "began", "begin", "begins", "became", "become", "becomes", "uses", "use", "involves", "involve",
+            "provides", "provide", "creates", "create", "makes", "make", "takes", "take", "gives", "give", "helps", "help",
+            "seeks", "seek", "tends", "tend", "remains", "remain", "seems", "seem", "appears", "appear", "says", "say", "said",
+            "writes", "wrote", "explains", "explain", "demonstrates", "demonstrate", "emphasizes", "emphasize", "highlights",
+            "highlight", "considers", "consider", "documents", "discovers", "discover", "observes", "observe", "records",
+            "reveals", "reveal", "concludes", "conclude", "points", "posits", "theorizes", "warns", "warn", "spent", "spend",
+            "spends", "developed", "develop", "develops", "lived", "live", "lives", "worked", "work", "works", "studied",
+            "studies", "study", "learn", "learned", "learns", "teach", "teaches", "taught", "offer", "offers", "offered",
+            "allow", "allows", "allowed", "led", "lead", "leads", "include", "includes", "included", "contain", "contains",
+            "cause", "causes", "caused", "shape", "shapes", "shaped", "affect", "affects", "affected", "produce", "produces");
+
+    private static final Set<String> DETERMINER_LIKE = set("a", "an", "the", "this", "that", "these", "those", "every", "each",
+            "all", "many", "some", "several", "most", "any", "no", "their", "its", "our", "his", "her", "my", "your");
+
+    /**
+     * The things a sentence names, as its phrase menu: noun phrases cut by rule,
+     * each a candidate entity or value. A phrase starts after an article, a
+     * preposition, a verb-like word or a comma; it ends at a phrase boundary, at
+     * a participle, or before a word that an article follows (that word is a
+     * verb: "anthropologists study every realm"). At most eight, first come
+     * first served, no two naming the same concept, none that isn't a thing.
+     */
+    public static List<String> phrases(String sentence) {
+        List<String> raw = rawTokens(sentence), q = tokens(sentence);
+        List<String> out = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        int n = q.size(), i = 0;
+        while (i < n && out.size() < LETTERS.length()) {
+            String t = q.get(i);
+            boolean word = Character.isLetterOrDigit(t.charAt(0));
+            if (!word || CLAUSE.contains(t) || COPULAS.contains(t) || SUBJECT_STOP.contains(t) || PREPOSITIONS.contains(t)
+                    || AFTER_VALUE.contains(t) || DETERMINER_LIKE.contains(t) || MODIFIERS.contains(t)
+                    || i + 1 < n && DETERMINER_LIKE.contains(q.get(i + 1)) || PARTICIPLES.contains(t)
+                    || t.endsWith("ed") && t.length() > 4 || t.endsWith("ly") && t.length() > 4 && !LY_NOUNS.contains(t) && !proper(raw.get(i))
+                    || VERBS.contains(t) || t.endsWith("ing") && t.length() > 5 && !(i == 0 || OPENERS.contains(q.get(i - 1))
+                            || PREPOSITIONS.contains(q.get(i - 1)))) { i++; continue; }   // "Smoking causes": a gerund that starts a phrase is a noun
+            int e = i;
+            while (e < n && content(q, i, e) < CONCEPT_WORDS) {
+                String u = q.get(e);
+                if (!Character.isLetterOrDigit(u.charAt(0)) || CLAUSE.contains(u) || COPULAS.contains(u) || e > i && (
+                        PREPOSITIONS.contains(u) && !"of".equals(u) || AFTER_VALUE.contains(u) && !"of".equals(u) || PARTICIPLES.contains(u)
+                        || u.endsWith("ed") && u.length() > 4 || e + 1 < n && DETERMINER_LIKE.contains(q.get(e + 1)) && !"of".equals(u)
+                        || VERBS.contains(u) && !"of".equals(q.get(e - 1))                 // "field of study": a noun after "of"
+                        || u.endsWith("ly") && u.length() > 4 && !LY_NOUNS.contains(u) && !proper(raw.get(e))   // not "Bayly"
+                        || u.endsWith("ing") && u.length() > 5 && !needsNoun(q.get(e - 1)))) break;
+                if ("of".equals(u) && !(e + 1 < n && Character.isLetterOrDigit(q.get(e + 1).charAt(0)))) break;
+                e++;
+            }
+            while (e > i && ("of".equals(q.get(e - 1)) || ARTICLES.contains(q.get(e - 1)))) e--;   // no dangling "of the"
+            if (e > i) {
+                String p = join(raw, i, e);
+                String c = concept(p).toLowerCase(Locale.ROOT);
+                if (!c.isEmpty() && notAThing(words(p), "is_a", false) == null && seen.add(c)) out.add(p);
+                i = e;
+            } else i++;
+        }
+        return out;
     }
 
     // ------------------------------------------------------------ harvest

@@ -274,7 +274,7 @@ final class Bridge {
     private Agent agentFor(String sourceName, ModelAgent.Progress progress) {
         Llama l = model.llama();
         if (l != null && model.useForExtraction())
-            return new ModelAgent(l, Policy.SCHEMA_ORDER, ModelAgent.traced(engine(), sourceName, progress));
+            return new ModelAgent(l, Policy.SCHEMA_ORDER, ModelAgent.traced(engine(), sourceName, progress)).briefed(engine().notes(l.id()));
         return new Agent.PatternAgent();
     }
 
@@ -373,6 +373,7 @@ final class Bridge {
         Map<?, ?> info = (Map<?, ?>) s.get("info");
         engine().noteWork("model", "Model loaded: " + (info == null ? model.id() : info.get("desc")) + " · " + s.get("threads") + " threads",
                 Tx.m("event", "load", "threads", s.get("threads")));
+        engine().present(model.id());                                   // it goes before the arbiters before it does any work
         return s;
     }
 

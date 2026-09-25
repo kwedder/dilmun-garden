@@ -46,8 +46,12 @@ public final class CoreTest {
     static final class FakeLlm implements Llm {
         final String reply;
         int calls = 0;
-        String lastSystem = "", lastUser = "";
+        String lastSystem = "", lastUser = "", lastGrammar = null;
         FakeLlm(String reply) { this.reply = reply; }
+        @Override public String generate(List<String[]> m, int max, float temp, boolean think, String grammar, Llama.Sink sink) {
+            lastGrammar = grammar;
+            return generate(m, max, temp, think, sink);
+        }
         @Override public String id() { return "model:fake:0123456789ab"; }
         @Override public String generate(List<String[]> m, int max, float temp, boolean think, Llama.Sink sink) {
             calls++;
@@ -299,11 +303,11 @@ public final class CoreTest {
 
         section("one pass, numbered sentences");
         String para = "# The Study of Humanity\nAnthropology is a vast field of study. Biological anthropology is the study of human beings. "
-                + "Dr. Owsley works in the U.S. and Peru. What do you think?\n";
+                + "Dr. Owsley works in Peru and the U.S. today. What do you think?\n";
         List<int[]> ss = ModelAgent.sentences(para, 0, para.length());
         List<String> sts = new ArrayList<>();
         for (int[] x : ss) sts.add(para.substring(x[0], x[1]));
-        check(sts.size() == 5 && sts.get(1).equals("Anthropology is a vast field of study.") && sts.get(3).startsWith("Dr. Owsley works in the U.S. and Peru"),
+        check(sts.size() == 5 && sts.get(1).equals("Anthropology is a vast field of study.") && sts.get(3).startsWith("Dr. Owsley works in Peru and the U.S. today"),
                 "the passage is split into sentences, abbreviations kept whole: " + sts);
         World nw = new World();
         nw.src.files.put("anth.md", para);
@@ -316,7 +320,7 @@ public final class CoreTest {
         Map<String, Object> nr = nw.e.extract("src:anth.md", nw.src, new ModelAgent(nf, Policy.SCHEMA_ORDER, null));
         String nh = nw.e.held().toString();
         check(nf.lastUser.contains("[1] Anthropology is a vast field of study.") && !nf.lastUser.contains("Study of Humanity")
-                && nf.lastSystem.contains("sentence number | entity"),
+                && nf.lastSystem.contains("sentence number | letter | relation | letter"),
                 "the model gets numbered sentences, headings left out, and answers with a sentence number instead of a quote");
         check(nh.contains("v=field_of_study") && nh.contains("entity=biological_anthropology") && nh.contains("v=Peru"),
                 "facts cut short or numbered one off are finished and re-pointed from the sentences, and kept only if they then hold up: " + nh);
@@ -352,6 +356,46 @@ public final class CoreTest {
         check(show(hv5).contains("[\"Henry M. Stanley\",\"is_a\",\"Nineteenth-century explorers\"]") && show(hv5).contains("capital of the Democratic Republic of the Congo")
                 && Grounding.concept("Henry M. Stanley").equals("Henry_M_Stanley"),
                 "initials and long names stay whole: " + show(hv5));
+        section("a briefing, a menu and a grammar");
+        World mw = new World();
+        mw.src.files.put("anth.md", "Anthropology is a vast field of study. Smoking causes lung cancer in adults. "
+                + "Susan Bayly describes caste in India.\n");
+        mw.e.scan(mw.src);
+        FakeLlm mf = new FakeLlm("2 | a | causes | b\n"          // smoking causes lung cancer: on the menu, and the sentence says it
+                + "3 | a | located_in | c\n"                        // Susan Bayly located_in India: the sentence doesn't say so
+                + "2 | a | causes | a\n"                            // the same thing twice
+                + "2 | a | causes | h\n");                          // off the menu
+        ModelAgent mag = new ModelAgent(mf, Policy.SCHEMA_ORDER, null).briefed(Arrays.asList("12 facts named a value the sentence doesn't hold"));
+        Map<String, Object> mr2 = mw.e.extract("src:anth.md", mw.src, mag);
+        String mh = mw.e.held().toString();
+        check(mf.lastUser.contains("[2] Smoking causes lung cancer in adults.") && mf.lastUser.contains("a) Smoking  b) lung cancer"),
+                "each sentence comes with a lettered menu of the things it names: " + mf.lastUser);
+        check(mf.lastUser.contains("1 | a | is_a | b") && mf.lastUser.contains("don't repeat"),
+                "the rules' verified facts from the passage are shown as examples of the form");
+        check(mf.lastGrammar != null && mf.lastGrammar.contains("\"is_a\" | \"part_of\"") && mf.lastGrammar.contains("letter ::= [a-h]")
+                && !mf.lastGrammar.contains("\"name\""),
+                "the output grammar is built from the schema: only its relations, only menu letters");
+        check(mf.lastSystem.contains("The arbiters' notes on your last reports") && mf.lastSystem.contains("12 facts named a value"),
+                "the arbiters' notes on the model's last results are in its briefing");
+        check(mh.contains("entity=smoking") && mh.contains("v=lung_cancer") && !mh.contains("v=India")
+                && Json.canon(Tx.payload(mw.e.store().get((String) mr2.get("tx")))).contains("\"menus\""),
+                "a menu answer becomes the fact it names; the arbiters still refuse what the sentence doesn't say; the menus are kept: " + mh);
+
+        long enlistBefore = mw.e.store().size();
+        Map<String, Object> en = mw.e.present(mf.id());
+        long enlistAfter = mw.e.store().size();
+        mw.e.present(mf.id());
+        List<String> notesNow = mw.e.notes(mf.id());
+        check(enlistAfter == enlistBefore + 1 && mw.e.store().size() == enlistAfter && Json.canon(en).contains("\"grammar\"")
+                && mw.e.state().enlisted.containsKey(mf.id()),
+                "a loaded model goes before the arbiters once: enlisted in the log under its briefings' hashes");
+        check(!notesNow.isEmpty() && notesNow.get(0).matches("1 of your last \\d+ facts were kept\\.") && Json.canon(notesNow).contains("were refused"),
+                "the arbiters' notes count the model's own facts, not the rules': " + notesNow);
+        List<Object> mrec = mw.e.recall("What causes lung cancer?", 5);
+        check(!mrec.isEmpty() && Ask.system(mrec).startsWith("You are Dilmun") && Ask.system(mrec).contains("How the store is laid out")
+                && Ask.system(mrec).contains("field_of_study is \"field of study\"") && Ask.system(mrec).contains("smoking causes lung_cancer"),
+                "a model answering from memory first reads how the store is laid out");
+
         ModelAgent.LineWatch lw = new ModelAgent.LineWatch();
         check(lw.more("1 | a | is_a | b\n2 | c | is_a | d\n") && lw.more("1 | a | is_a | b\n") && !lw.more("1 | a | is_a | b\n"),
                 "a generation that repeats the same line three times is stopped");

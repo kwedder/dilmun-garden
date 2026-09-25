@@ -697,6 +697,82 @@ public final class Engine {
         return s.size();
     }
 
+    // ------------------------------------------------------------ enlisting a model
+
+    /**
+     * A model goes before the arbiters when it loads. They enlist it under the
+     * hashes of the briefings it will be given (extraction, its output grammar,
+     * reading), signed into the log, so every later result can be traced to the
+     * exact instructions behind it. A model already enlisted under the same
+     * briefings isn't enlisted again. Returns the briefings' hashes and the
+     * arbiters' notes on the model's last results.
+     */
+    public synchronized Map<String, Object> present(String modelId) {
+        return request("enlist " + modelId, false, () -> {
+            live();
+            List<String> fixed = Briefing.fixed(extractable());
+            Map<String, Object> briefs = Tx.m("extract", Briefing.hash(fixed.get(0)), "grammar", Briefing.hash(fixed.get(1)),
+                    "read", Briefing.hash(fixed.get(2)));
+            State st = state();
+            boolean again = briefs.equals(st.enlisted.get(modelId));
+            if (!again) commit(portalKey, portal, "enlist", "system", Tx.m("model", modelId, "briefings", briefs), null);
+            List<String> notes = notes(modelId);
+            note("enlist", (again ? "Arbiters: model already enlisted under these briefings · " : "Arbiters enlisted the model · ")
+                    + "briefing " + briefs.get("extract") + (notes.isEmpty() ? "" : " · " + plural(notes.size(), "note", "notes") + " from its last results"),
+                    Tx.m("model", modelId, "again", again, "notes", (long) notes.size()));
+            return Tx.m("model", modelId, "briefings", briefs, "notes", new ArrayList<Object>(notes));
+        });
+    }
+
+    /** The schema attributes a model may report. */
+    public static List<String> extractable() {
+        List<String> out = new ArrayList<>(Policy.SCHEMA_ORDER);
+        out.remove("name");
+        return out;
+    }
+
+    /** How many of a model's last results the arbiters' notes look back over. */
+    static final int NOTE_RESULTS = 5;
+
+    /**
+     * The arbiters' notes on a model's last results: the three reasons they
+     * refused its facts most often, counted, and how many it got through. Only
+     * the model's own facts count, not the ones the rules found beside them.
+     * They go into its next briefing, so it gets its own record back each time.
+     */
+    @SuppressWarnings("unchecked")
+    public synchronized List<String> notes(String modelId) {
+        State st = state();
+        Map<String, Long> why = new TreeMap<>();
+        long refused = 0, total = 0;
+        int seen = 0;
+        for (int i = st.results.size() - 1; i >= 0 && seen < NOTE_RESULTS; i--) {
+            Map<String, Object> r = st.results.get(i);
+            if (!modelId.equals(r.get("agent"))) continue;
+            seen++;
+            Map<String, Object> tx = store.get((String) r.get("id"));
+            Object prop = tx == null || Tx.payload(tx) == null ? null : Tx.payload(tx).get("proposal");
+            List<Object> facts = prop instanceof Map && ((Map<String, Object>) prop).get("facts") instanceof List
+                    ? (List<Object>) ((Map<String, Object>) prop).get("facts") : Collections.emptyList();
+            Set<Long> mine = new HashSet<>();
+            for (int k = 0; k < facts.size(); k++) if (!"rules".equals(((Map<String, Object>) facts.get(k)).get("by"))) { mine.add((long) k); total++; }
+            for (Object o : (List<Object>) r.get("rejected")) {
+                Map<String, Object> rj = (Map<String, Object>) o;
+                if (!mine.contains(((Number) rj.get("i")).longValue())) continue;
+                refused++;
+                String reason = String.valueOf(rj.get("reason")).replaceAll(":.*|\"[^\"]*\"", "").replaceAll(" (between|that) .*", "").trim();
+                why.merge(reason, 1L, Long::sum);
+            }
+        }
+        List<String> out = new ArrayList<>();
+        if (total == 0) return out;
+        out.add((total - refused) + " of your last " + total + " facts were kept.");
+        List<Map.Entry<String, Long>> top = new ArrayList<>(why.entrySet());
+        Collections.sort(top, (x, y) -> Long.compare(y.getValue(), x.getValue()));
+        for (int k = 0; k < Math.min(3, top.size()); k++) out.add(top.get(k).getValue() + " were refused: " + top.get(k).getKey() + ".");
+        return out;
+    }
+
     // ------------------------------------------------------------ steward
 
     public synchronized void approve(List<String> keys) {

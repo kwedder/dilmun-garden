@@ -43,6 +43,7 @@ public final class State {
     public final Map<String, At> approvals = new HashMap<>();
     public final Map<String, At> denials = new HashMap<>();                  // fact key → the steward's latest denial
     public final TreeMap<String, Map<String, Object>> corrections = new TreeMap<>(); // tx id → the steward's corrected fact
+    public final Map<String, Object> enlisted = new HashMap<>();              // model id → the briefings' hashes it was last enlisted under
     public final List<Map<String, Object>> decisions = new ArrayList<>();
     public final LinkedHashMap<String, Map<String, Object>> datoms = new LinkedHashMap<>();
     public final Map<String, Object[]> lastEvent = new HashMap<>();          // fact key → {op, At}
@@ -120,6 +121,9 @@ public final class State {
                 deny((String) p.get("from"), at);
                 break;
             }
+            case "enlist":
+                enlisted.put((String) p.get("model"), p.get("briefings"));
+                break;
             case "skill": {
                 TreeMap<Long, List<String>> vs = skills.get(p.get("name"));
                 if (vs == null) { vs = new TreeMap<>(); skills.put((String) p.get("name"), vs); }

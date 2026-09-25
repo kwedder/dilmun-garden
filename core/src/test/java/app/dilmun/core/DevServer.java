@@ -95,13 +95,14 @@ public final class DevServer {
         if (llama == null) {
             llama = Llama.load(System.getProperty("dilmun.model"), modelId(), 2048, threads());
             engine.noteWork("model", "Model loaded: " + llama.info().get("desc") + " · " + threads() + " threads", Tx.m("event", "load"));
+            engine.present(llama.id());
         }
         return modelStatus();
     }
 
     static Agent agentFor(String name, ModelAgent.Progress progress) {
         return llama != null && useModel
-                ? new ModelAgent(llama, Policy.SCHEMA_ORDER, ModelAgent.traced(engine, name, progress))
+                ? new ModelAgent(llama, Policy.SCHEMA_ORDER, ModelAgent.traced(engine, name, progress)).briefed(engine.notes(llama.id()))
                 : new Agent.PatternAgent();
     }
 

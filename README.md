@@ -103,6 +103,23 @@ The map plays every step the engine takes as it happens: a packet on the edge it
 
 Try editing a file in your folder after mapping it: an extract is refused until you rescan. Pause on the Work tab and try to extract: the arbiters refuse.
 
+## How the model works for the arbiters
+
+The model never writes to memory. It works under the arbiters, like this:
+
+1. **Enlisting.** When the model loads, it goes before the arbiters. They sign an `enlist` entry into the log: the exact model file, and a hash of each briefing it will be given. Every later result can be traced to those instructions.
+2. **Extraction.** For each passage the arbiters send an agent built on the model, with a briefing:
+   - the sentences, numbered, each with a lettered **menu** of the things it names (cut by rule)
+   - an **output grammar** built from the schema: the model can only write `sentence | letter | relation | letter`, so it can't invent a value or a relation
+   - two or three facts the rules already verified in the passage, as examples of the form
+   - the arbiters' **notes** on its last results: how many of its facts were kept, and why the rest were refused
+3. **Rules in the same pass.** The rules read what they can read for certain: "E is a V", "E, a V", "V is called E", "V such as A, B and C", "the primatologist Carel van Schaik". These cost no model time.
+4. **Checks.** Every fact, from the rules or the model, is checked against its sentence by rule (see `Grounding`). The value must be in the sentence as a whole phrase. The sentence must say the relation with a word for it ("is a", "causes", "part of", "in"). Entity and value must be things, not pronouns, clauses or adjectives. Refusals are kept with their reasons.
+5. **Concepts.** Facts that hold up are written as concept keys: "Anthropology is a vast field of study" becomes `anthropology | is_a | field_of_study`. Every source that says it lands on the same key, so support adds up at the gate.
+6. **Reading.** Asked a question, the model first gets the arbiters' reading briefing, which says how the store is laid out. Only then does it see the facts it may use. With **Let it think first** on, its reasoning starts from those facts, one by one.
+
+At the gate you can **Approve**, **Edit** or **Deny** any held fact, and Edit or Deny any settled one. A denied fact is never promoted, however many sources agree. An edited fact is settled as you wrote it, with the original's quote. Both are signed with your key.
+
 ## What's inside
 
 ```

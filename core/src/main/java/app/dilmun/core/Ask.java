@@ -26,23 +26,8 @@ public final class Ask {
                 + " (" + how + ")" + quote;
     }
 
-    public static String system(List<Object> facts) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("You are Dilmun, a memory that lives on this device. Answer the user's question.\n");
-        if (facts.isEmpty()) {
-            sb.append("The memory holds no facts about this question. Say so in one short sentence, then answer from general knowledge and say that part is not from memory.");
-        } else {
-            sb.append("These facts are from the user's memory. Facts marked with sources or approved passed a promotion gate; ")
-              .append("facts marked unconfirmed come from a single source and have not passed it yet, so say so when you rely on one. ")
-              .append("Base your answer on these facts first, and cite each one you use by number, like [1]. ")
-              .append("If the facts don't cover the question, say so, then answer from general knowledge and say that part is not from memory. Be brief.\n\nFacts:\n");
-            for (int i = 0; i < facts.size(); i++) {
-                @SuppressWarnings("unchecked") Map<String, Object> f = (Map<String, Object>) facts.get(i);
-                sb.append(line(i + 1, f)).append('\n');
-            }
-        }
-        return sb.toString();
-    }
+    /** The arbiters' reading briefing: how the store is laid out, then the facts. */
+    public static String system(List<Object> facts) { return Briefing.read(facts); }
 
     /**
      * The start of the model's reasoning, written for it. The system prompt alone

@@ -58,6 +58,7 @@ public final class ModelAgent implements Agent {
     private final Llm llm;
     private final List<String> attributes;
     private final Progress progress;
+    private List<String> notes = new ArrayList<>();
 
     public ModelAgent(Llm llm, List<String> attributes, Progress progress) {
         this.llm = llm;
@@ -68,30 +69,14 @@ public final class ModelAgent implements Agent {
 
     @Override public String id() { return llm.id(); }
 
-    /*
-     * The prompt names no example concepts in its rules: a 1B model copies the
-     * words it's given, and a real run put "biological anthropology" (from an
-     * earlier rule's wording) at the head of facts in texts that never mention
-     * it. The one example is kept far from any likely subject, and a fact
-     * copied from it is refused anyway, since its words aren't in the sentence.
-     */
-    String systemPrompt() {
-        return "You read numbered sentences and list every fact they state. Go through the sentences in order, "
-                + "and write as many facts as each one states.\n"
-                + "One fact per line, in exactly this form:\n"
-                + "sentence number | entity | attribute | value\n"
-                + "Use only these attributes: " + String.join(", ", attributes) + ".\n"
-                + "Entity and value are short names taken from that sentence, words joined by _. "
-                + "Name the whole thing, not one word of it, and leave out words that only praise or grade it. "
-                + "Entity and value are never the same.\n"
-                + "Use is_a only where the sentence says the entity is a value.\n"
-                + "Skip opinions, questions and instructions to the reader. Write nothing else. If no sentence states a fact, write NONE.\n\n"
-                + "Example sentences:\n"
-                + "[1] The kestrel, a small falcon, hunts voles in Norway.\n"
-                + "Example output:\n"
-                + "1 | kestrel | is_a | falcon\n"
-                + "1 | kestrel | located_in | Norway";
+    /** The arbiters' notes on this model's last results, put in its briefing (Engine.notes). */
+    public ModelAgent briefed(List<String> notes) {
+        this.notes = notes == null ? new ArrayList<String>() : new ArrayList<>(notes);
+        return this;
     }
+
+    /** The briefing the arbiters give this agent. */
+    String systemPrompt() { return Briefing.extract(attributes, notes); }
 
     /**
      * A small model sometimes numbers a fact one or two sentences off. When the
@@ -157,30 +142,39 @@ public final class ModelAgent implements Agent {
             int from = passages.get(p)[0], to = passages.get(p)[1];
             if (progress != null) progress.passage(p + 1, passages.size());
             List<int[]> sents = readable(text, from, to);
+            List<List<String>> menus = new ArrayList<>();
+            for (int[] x : sents) menus.add(Grounding.phrases(text.substring(x[0], x[1])));
+            List<Map<String, Object>> ruled = new ArrayList<>();          // the rules read what they can for certain, at no model cost
+            for (int[] x : sents)
+                for (String[] h : Grounding.harvest(text.substring(x[0], x[1])))
+                    ruled.add(Tx.m("ident", Arrays.asList("name", h[0]), "a", h[1], "v", h[2], "nu", Policy.PATTERN_NU, "by", "rules",
+                            "quote", Tx.m("start", (long) x[0], "end", (long) x[1], "text", text.substring(x[0], x[1]))));
             StringBuilder user = new StringBuilder("Sentences:\n");
             for (int i = 0; i < sents.size(); i++)
-                user.append('[').append(i + 1).append("] ").append(text.substring(sents.get(i)[0], sents.get(i)[1]).replace('\n', ' ')).append('\n');
+                if (menus.get(i).size() >= 2)                               // a fact needs two things to relate
+                    user.append(Briefing.sentence(i + 1, text.substring(sents.get(i)[0], sents.get(i)[1]), menus.get(i)));
+            List<String> shown = examples(ruled, sents, menus);
+            if (!shown.isEmpty()) {
+                user.append("\nThe rules already reported these, which shows the form (don't repeat them):\n");
+                for (String l : shown) user.append(l).append('\n');
+            }
             List<String[]> msgs = new ArrayList<>();
             msgs.add(new String[]{"system", systemPrompt()});
             msgs.add(new String[]{"user", user.toString()});
             final LineWatch watch = new LineWatch();
-            String out = llm.generate(msgs, MAX_TOKENS, 0f, false, piece -> {
+            String out = llm.generate(msgs, MAX_TOKENS, 0f, false, Briefing.extractGrammar(attributes), piece -> {
                 String t = new String(piece, java.nio.charset.StandardCharsets.UTF_8);
                 if (progress != null) progress.text(t);
                 return watch.more(t);
             });
-            raw.add(Tx.m("from", (long) from, "to", (long) to, "sentences", (long) sents.size(), "output", out));
-            int proposed = 0, quoted = 0;
-            List<Map<String, Object>> found = new ArrayList<>();
-            for (int[] x : sents)                                             // the rules read what they can for certain, at no model cost
-                for (String[] h : Grounding.harvest(text.substring(x[0], x[1])))
-                    found.add(Tx.m("ident", Arrays.asList("name", h[0]), "a", h[1], "v", h[2], "nu", Policy.PATTERN_NU, "by", "rules",
-                            "quote", Tx.m("start", (long) x[0], "end", (long) x[1], "text", text.substring(x[0], x[1]))));
-            for (Map<String, Object> f : parse(out, text, from, to, sents)) {
+            raw.add(Tx.m("from", (long) from, "to", (long) to, "sentences", (long) sents.size(), "menus", new ArrayList<Object>(menus), "output", out));
+            List<Map<String, Object>> found = new ArrayList<>(ruled);
+            for (Map<String, Object> f : parse(out, text, from, to, sents, menus)) {
                 f.put("a", attribute((String) f.get("a")));
                 repoint(f, text, sents);
                 found.add(f);
             }
+            int proposed = 0, quoted = 0;
             for (Map<String, Object> f : found) {
                 String key = Grounding.concept(String.valueOf(((List<?>) f.get("ident")).get(1))).toLowerCase(Locale.ROOT) + "|" + f.get("a")
                         + "|" + Grounding.concept(String.valueOf(f.get("v"))).toLowerCase(Locale.ROOT);   // the rules' fact and the model's, once
@@ -295,6 +289,55 @@ public final class ModelAgent implements Agent {
             start = end;
         }
         return out;
+    }
+
+    /**
+     * Up to three of the rules' facts for this passage, written the way the model
+     * must answer, where both sides are on their sentence's menu.
+     */
+    @SuppressWarnings("unchecked")
+    static List<String> examples(List<Map<String, Object>> ruled, List<int[]> sents, List<List<String>> menus) {
+        List<String> out = new ArrayList<>();
+        for (Map<String, Object> f : ruled) {
+            if (out.size() >= 3) break;
+            long start = ((Number) ((Map<String, Object>) f.get("quote")).get("start")).longValue();
+            for (int i = 0; i < sents.size(); i++) {
+                if (sents.get(i)[0] != start || menus.get(i).size() < 2) continue;
+                int e = letter(menus.get(i), String.valueOf(((List<Object>) f.get("ident")).get(1))), v = letter(menus.get(i), String.valueOf(f.get("v")));
+                if (e >= 0 && v >= 0 && e != v)
+                    out.add((i + 1) + " | " + Grounding.LETTERS.charAt(e) + " | " + f.get("a") + " | " + Grounding.LETTERS.charAt(v));
+            }
+        }
+        return out;
+    }
+
+    private static int letter(List<String> menu, String phrase) {
+        String c = Grounding.concept(phrase).toLowerCase(Locale.ROOT);
+        for (int i = 0; i < menu.size(); i++) if (Grounding.concept(menu.get(i)).toLowerCase(Locale.ROOT).equals(c)) return i;
+        return -1;
+    }
+
+    /**
+     * Reads the model's lines. "n | letter | relation | letter" names two phrases
+     * off sentence n's menu; the sentence is the quote. Lines in the older forms,
+     * with the entity and value written out, are read too.
+     */
+    static List<Map<String, Object>> parse(String out, String text, int from, int to, List<int[]> sents, List<List<String>> menus) {
+        List<Map<String, Object>> facts = new ArrayList<>();
+        StringBuilder rest = new StringBuilder();
+        for (String line0 : out.split("\n")) {
+            String[] parts = line0.trim().split("\\s*\\|\\s*");
+            if (parts.length == 4 && parts[0].matches("\\d{1,3}") && parts[1].matches("[a-z]") && parts[3].matches("[a-z]")) {
+                int k = Integer.parseInt(parts[0]) - 1, x = parts[1].charAt(0) - 'a', y = parts[3].charAt(0) - 'a';
+                if (k < 0 || k >= sents.size() || x == y || x >= menus.get(k).size() || y >= menus.get(k).size()) continue;  // not on the menu: nothing to name
+                int[] span = sents.get(k);
+                facts.add(Tx.m("ident", Arrays.asList("name", menus.get(k).get(x)), "a", parts[2].trim().toLowerCase(Locale.ROOT),
+                        "v", menus.get(k).get(y), "nu", 700L,
+                        "quote", Tx.m("start", (long) span[0], "end", (long) span[1], "text", text.substring(span[0], span[1]))));
+            } else rest.append(line0).append('\n');
+        }
+        facts.addAll(parse(rest.toString(), text, from, to, sents));
+        return facts;
     }
 
     /** Reads the model's lines, "n | entity | attribute | value" with sentence n as the quote. */

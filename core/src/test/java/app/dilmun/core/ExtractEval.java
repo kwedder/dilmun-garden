@@ -34,6 +34,8 @@ public final class ExtractEval {
         e.scan(src);
         int kept = 0, grounding = 0, other = 0;
         try (Llama m = Llama.load(args[0], "model:eval", 4096, Llama.defaultThreads())) {
+            Map<String, Object> enlisted = e.present(m.id());
+            System.out.println("Enlisted under briefings " + enlisted.get("briefings"));
             ModelAgent agent = new ModelAgent(m, Policy.SCHEMA_ORDER, new ModelAgent.Progress() {
                 @Override public void passage(int i, int n) { System.out.println("  passage " + i + " of " + n); }
                 @Override public void text(String piece) { }
@@ -41,7 +43,9 @@ public final class ExtractEval {
             for (Object o : e.sources()) {
                 Map<String, Object> s = (Map<String, Object>) o;
                 System.out.println("\n" + s.get("name"));
-                Map<String, Object> r = e.extract((String) s.get("id"), src, agent);
+                List<String> notes = e.notes(m.id());
+                if (!notes.isEmpty()) System.out.println("  arbiters' notes: " + notes);
+                Map<String, Object> r = e.extract((String) s.get("id"), src, agent.briefed(notes));
                 Map<String, Object> p = (Map<String, Object>) Tx.payload(e.store().get((String) r.get("tx"))).get("proposal");
                 List<Object> facts = (List<Object>) p.get("facts");
                 String[] why = new String[facts.size()];

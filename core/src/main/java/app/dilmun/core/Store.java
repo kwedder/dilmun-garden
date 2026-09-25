@@ -25,7 +25,7 @@ public final class Store {
     public static final Set<String> STEWARD_KINDS = new HashSet<>(Arrays.asList(
             "genesis", "admit", "schema", "approve", "deny", "correct", "pause", "resume", "skill"));
     public static final Set<String> PORTAL_KINDS = new HashSet<>(Arrays.asList(
-            "directive", "assert", "expire", "promote", "map", "retract", "dream"));
+            "directive", "assert", "expire", "promote", "map", "retract", "dream", "enlist"));
     public static final Set<String> CLOSING_KINDS = new HashSet<>(Arrays.asList("assert", "expire"));
 
     private final LinkedHashMap<String, Map<String, Object>> txs = new LinkedHashMap<>();

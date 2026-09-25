@@ -11,6 +11,11 @@ public interface Llm {
     /** A reply to the messages, each {role, content}. */
     String generate(List<String[]> messages, int maxTokens, float temp, boolean think, Llama.Sink sink);
 
+    /** A reply held to an output grammar (GBNF, rule "root"). A model that can't hold one answers freely. */
+    default String generate(List<String[]> messages, int maxTokens, float temp, boolean think, String grammar, Llama.Sink sink) {
+        return generate(messages, maxTokens, temp, think, sink);
+    }
+
     void stop();
 
     Map<String, Object> stats();

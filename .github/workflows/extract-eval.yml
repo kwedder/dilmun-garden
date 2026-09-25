@@ -18,6 +18,9 @@ on:
       - .github/workflows/extract-eval.yml
       - core/src/main/java/app/dilmun/core/Grounding.java
       - core/src/main/java/app/dilmun/core/ModelAgent.java
+      - core/src/main/java/app/dilmun/core/Engine.java
+      - core/src/main/java/app/dilmun/core/Briefing.java
+      - core/src/main/java/app/dilmun/core/Verifier.java
 
 permissions:
   contents: read

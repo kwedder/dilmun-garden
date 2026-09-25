@@ -403,9 +403,15 @@ public final class Engine {
         return out;
     }
 
+    private static final java.util.regex.Pattern STUDY_AID = java.util.regex.Pattern.compile(
+            "#+\\s*(learning (outcomes|objectives)|introduction)\\b", java.util.regex.Pattern.CASE_INSENSITIVE);
+
     /** The heading a sentence sits under, its frame: "in Ghana" facts stay in Ghana. */
     static String frameOf(String text, int at) {
         int h = text.lastIndexOf("\n#", at);
+        while (h > 0 && STUDY_AID.matcher(text.substring(h + 1, Math.min(text.length(), h + 40))).lookingAt())
+            h = text.lastIndexOf("\n#", h - 1);                 // "Learning Outcomes" names no topic: the heading before it does
+        if (h < 0 && at > 0 && text.startsWith("#") && STUDY_AID.matcher(text).lookingAt()) return null;
         int start = h >= 0 ? h + 1 : text.startsWith("#") && at > 0 ? 0 : -1;
         if (start < 0) return null;
         int end = text.indexOf('\n', start);
@@ -501,12 +507,25 @@ public final class Engine {
         Set<String> words = words(question);
         State st = state();
         Map<String, String> names = st.names();
+        // Each of the question's words weighs by how rare it is among the claims: a word
+        // in every sentence tells nothing about which one answers.
+        Map<String, Integer> df = new HashMap<>();
+        Map<String, Set<String>> claimWords = new HashMap<>();
+        for (Map.Entry<String, Map<String, Object>> e : st.claims.entrySet()) {
+            Set<String> cw = words(String.valueOf(e.getValue().get("text")));
+            claimWords.put(e.getKey(), cw);
+            for (String w : cw) if (words.contains(w)) df.merge(w, 1, Integer::sum);
+        }
+        double nClaims = Math.max(1, st.claims.size());
+        Map<String, Double> weight = new HashMap<>();
+        for (String w : words) weight.put(w, Math.log(1 + nClaims / (df.containsKey(w) ? df.get(w) : 1)));
+        java.util.IdentityHashMap<Object, Double> rank = new java.util.IdentityHashMap<>();
         List<Object[]> scored = new ArrayList<>();
         Set<String> seen = new HashSet<>();
         TreeMap<String, List<Map<String, Object>>> episodes = groupEpisodes(st);
         Map<String, String> contested = contestedNow(st, episodes);
         long now = nextHlc()[0];
-        Object[] bestArchive = null;
+        List<Object[]> archive = new ArrayList<>();
         for (Map<String, Object> d : st.tier("culture")) {
             if ("name".equals(d.get("a"))) continue;
             String e = st.find((String) d.get("e"));
@@ -518,11 +537,11 @@ public final class Engine {
             Map<String, Object> row = recallRow(ent, d, val, support, "settled", quoteOf(d));
             row.put("layer", strength >= CANON ? "canon" : "archive");
             if (contested.containsKey(key)) row.put("contested", contested.get(key));
-            double score = score(words, row);
+            double score = score(weight, row);
             if (score <= 0) continue;
             Object[] x = new Object[]{(score + 0.5) * (0.5 + 0.5 * strength), row};
             if (strength >= CANON) scored.add(x);
-            else if (bestArchive == null || (Double) x[0] > (Double) bestArchive[0]) bestArchive = x;   // the archive waits for its slot
+            else archive.add(x);                                     // the archive waits for its slot
         }
         Set<String> promoted = new HashSet<>();
         for (Map<String, Object> d : st.tier("culture")) promoted.add(st.factKey("culture", d));
@@ -542,7 +561,7 @@ public final class Engine {
             }
             Map<String, Object> row = recallRow(ent, d, val, distinctSources(g.getValue()), "held", best);
             if (contested.containsKey(g.getKey())) row.put("contested", contested.get(g.getKey()));
-            double score = score(words, row);
+            double score = score(weight, row);
             if (score > 0) scored.add(new Object[]{score, row});
         }
         Collections.sort(scored, (x, y) -> Double.compare((Double) y[0], (Double) x[0]));
@@ -550,40 +569,81 @@ public final class Engine {
         long settled = 0, held = 0;
         // Interleaving: one slot goes to the best-matching archive item, so old knowledge that has
         // faded from the canon still comes back when it's what the question is about.
-        int room = bestArchive != null && limit > 1 ? limit - 1 : limit;
+        // What the canon leaves room for goes to the archive too, so a memory that has all
+        // grown old still answers.
+        Collections.sort(archive, (x, y) -> Double.compare((Double) y[0], (Double) x[0]));
+        int room = !archive.isEmpty() && limit > 1 ? limit - 1 : limit;
         for (Object[] x : scored) {
             if (out.size() >= room) break;
             out.add(x[1]);
+            rank.put(x[1], (Double) x[0]);
             if ("settled".equals(castMap(x[1]).get("status"))) settled++; else held++;
         }
-        if (bestArchive != null) { out.add(bestArchive[1]); settled++; }
-        List<Object[]> cs = new ArrayList<>();                         // then the claims about the question's concepts
+        for (Object[] x : archive) {
+            if (out.size() >= limit) break;
+            out.add(x[1]);
+            rank.put(x[1], (Double) x[0]);
+            settled++;
+        }
+        // Then the claims about the question, ranked by the question's words weighted by rarity
+        // (a word in every claim tells nothing), with a lift for a claim that defines the
+        // question's subject ("Holism is ...").
+        List<Object[]> cs = new ArrayList<>();
         for (Map.Entry<String, Map<String, Object>> e : st.claims.entrySet()) {
             if (st.denied(e.getKey())) continue;
             if (Boolean.TRUE.equals(e.getValue().get("quarantined")) && !st.approved(e.getKey())) continue;   // addresses an AI: not until approved
             if (st.contestedBy(e.getKey()) != null) continue;
-            Set<String> cw = words(String.valueOf(e.getValue().get("text")));
-            double sc = 0;
-            for (String w : words) if (cw.contains(w)) sc += 1;
-            for (Object c : (List<?>) e.getValue().get("concepts")) for (String w : String.valueOf(c).split("_")) if (words.contains(w)) sc += 1;
-            if (sc >= 2) cs.add(new Object[]{sc + (st.settledClaims.containsKey(e.getKey()) ? 0.5 : 0), e.getKey()});
+            Set<String> cw = claimWords.get(e.getKey());
+            double sc = 0, top = 0;
+            int hits = 0;
+            for (String w : words) {
+                if (!cw.contains(w)) continue;
+                double idf = weight.get(w);
+                sc += idf;
+                top = Math.max(top, idf);
+                hits++;
+            }
+            if (hits == 0) continue;
+            String text = String.valueOf(e.getValue().get("text"));
+            if (definesSubject(text, words)) sc += 1.5 * top;
+            sc /= 1 + 0.02 * Math.max(0, cw.size() - 12);                // a long sentence matches by chance more often
+            if (hits >= 2 || definesSubject(text, words) || words.size() == 1)
+                cs.add(new Object[]{sc + (st.settledClaims.containsKey(e.getKey()) ? 0.5 : 0), e.getKey()});
         }
         Collections.sort(cs, (x, y) -> Double.compare((Double) y[0], (Double) x[0]));
         long claimsIn = 0;
+        long claimRoom = Math.max(RECALL_CLAIMS, limit - out.size());   // claims fill what the facts left
         for (Object[] x : cs) {
-            if (claimsIn >= RECALL_CLAIMS) break;
+            if (claimsIn >= claimRoom) break;
             String id = (String) x[1];
             boolean ok = st.settledClaims.containsKey(id);
             Map<String, Object> row = Tx.m("kind", "claim", "key", id, "text", st.claims.get(id).get("text"), "status", ok ? "settled" : "held",
                     "support", (long) st.claimSupport(id).size(), "quote", "");
             if (st.claims.get(id).get("frame") != null) row.put("frame", st.claims.get(id).get("frame"));
             out.add(row);
+            rank.put(row, (Double) x[0]);
             claimsIn++;
         }
+        // One ranking for facts and claims, so a weak fact can't push out the sentence that answers.
+        Collections.sort(out, (x, y) -> Double.compare(rank.get(y), rank.get(x)));
         note("recall", "Ask read memory: " + plural(settled, "settled fact", "settled facts") + ", "
                         + plural(held, "unconfirmed fact", "unconfirmed facts") + " and " + plural(claimsIn, "claim", "claims") + " match the question",
                 Tx.m("settled", settled, "held", held, "claims", claimsIn));
         return out;
+    }
+
+    private static final java.util.regex.Pattern DEFINES = java.util.regex.Pattern.compile(
+            "^(?:[^,]{0,25}, )?(?:the |an? )?([\\p{L}\\p{N} '’-]{2,60}?)(?:,[^,]{0,80},)? (?:is|are|was|were|means|refers to|describes)\\b(?! not\\b).*",
+            java.util.regex.Pattern.CASE_INSENSITIVE);
+
+    /** Whether a claim opens by saying what the question's subject is: "Holism is a method ...". */
+    static boolean definesSubject(String claim, Set<String> questionWords) {
+        java.util.regex.Matcher m = DEFINES.matcher(claim.trim());
+        if (!m.matches()) return false;
+        Set<String> subject = words(m.group(1));
+        if (subject.isEmpty()) return false;
+        for (String w : subject) if (!questionWords.contains(w)) return false;
+        return true;
     }
 
     /** Contested keys, from the state already read (recall holds the lock). */
@@ -608,13 +668,13 @@ public final class Engine {
                 "status", status, "quote", quote);
     }
 
-    private static double score(Set<String> words, Map<String, Object> row) {
+    private static double score(Map<String, Double> weight, Map<String, Object> row) {
         Set<String> fact = words(row.get("entity") + " " + String.valueOf(row.get("a")).replace('_', ' ') + " " + row.get("v"));
         Set<String> quote = words(String.valueOf(row.get("quote")));
         double s = 0;
-        for (String w : words) {
-            if (fact.contains(w)) s += 2;
-            else if (quote.contains(w)) s += 1;
+        for (Map.Entry<String, Double> w : weight.entrySet()) {
+            if (fact.contains(w.getKey())) s += 2 * w.getValue();
+            else if (quote.contains(w.getKey())) s += w.getValue();
         }
         return s;
     }

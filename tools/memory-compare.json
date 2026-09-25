@@ -1,0 +1,33 @@
+{
+  "about": "Questions for comparing memory systems on OpenStax 'Introduction to Anthropology' modules m00001-m00008 (CC BY-NC-SA 4.0, fetched at run time, never stored here). A question counts as answered when any of its answer strings appears, ignoring case, in what the memory hands the model within the context budget. Written for this test from the text.",
+  "questions": [
+    {"q": "What is anthropology?", "a": ["study of humanity"]},
+    {"q": "What is a narrative?", "a": ["story that describes a connected set"]},
+    {"q": "What is a commitment in academic study?", "a": ["common goal recognized by the scholars"]},
+    {"q": "What are the four fields of anthropology?", "a": ["biological anthropology, archaeology, cultural anthropology, and linguistic anthropology"]},
+    {"q": "What are fossils?", "a": ["remains of organisms"]},
+    {"q": "What do biological anthropologists study?", "a": ["origins, evolution, and diversity of our species", "biological diversity of contemporary humans"]},
+    {"q": "What does forensic anthropology do?", "a": ["solve crimes"]},
+    {"q": "What do archaeologists rely on?", "a": ["artifacts and fossils"]},
+    {"q": "What methods do cultural anthropologists use?", "a": ["observation, participation, and interviews"]},
+    {"q": "How do linguistic anthropologists view language?", "a": ["primary means by which humans create their diverse cultures"]},
+    {"q": "What is the most common way people assign race?", "a": ["skin color"]},
+    {"q": "What is enculturation?", "a": ["process of acquiring our particular culture"]},
+    {"q": "What is ethnocentrism?", "a": ["own culture is more advanced", "we call that ethnocentrism"]},
+    {"q": "How does primitivism depict Africans and Native Americans?", "a": ["exotic, simple, highly sexual", "noble savages"]},
+    {"q": "How does orientalism portray peoples of Asia and the Middle East?", "a": ["irrational, fanatical, and out of control"]},
+    {"q": "Who described orientalism?", "a": ["Edward Said"]},
+    {"q": "What was the colonial system?", "a": ["global mechanism for European merchants"]},
+    {"q": "What is holism?", "a": ["distinctive method of analysis"]},
+    {"q": "What had changed in areas with lower infant mortality?", "a": ["mobile phones"]},
+    {"q": "What influences marriage patterns?", "a": ["food-getting strategy"]},
+    {"q": "What is cultural relativism for anthropologists?", "a": ["temporary suspension of judgment"]},
+    {"q": "Who pioneered long-term fieldwork among the Trobriand peoples?", "a": ["Malinowski"]},
+    {"q": "What did Malinowski argue the kula exchange took the place of?", "a": ["warfare"]},
+    {"q": "Who highlighted that no culture is isolated in its process of change?", "a": ["Franz Boas"]},
+    {"q": "Who coined good enough ethnography?", "a": ["Scheper-Hughes"]},
+    {"q": "What did Randy Haas discover in the Andes?", "a": ["grave of a teenager", "young woman"]},
+    {"q": "Where does Michelle Brown observe monkeys?", "a": ["Uganda"]},
+    {"q": "How long did Tom Dillehay's team excavate in northern Peru?", "a": ["seven years"]}
+  ]
+}

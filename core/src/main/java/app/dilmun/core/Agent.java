@@ -10,9 +10,9 @@ import java.util.Map;
  * the text of the one source the directive names, and get back a proposal:
  * {tools: [...], facts: [{ident: ["name", E], a, v, nu, quote: {start, end, text}}]}.
  *
- * The on-device model (MiniCPM5-1B) will implement this interface in a later
- * build. This build ships {@link PatternAgent} in the model's slot, so the
- * whole path from directive to culture can be exercised today.
+ * With no model loaded, {@link RulesAgent} fills the slot: the arbiters' own
+ * rules, so prose still gives facts. {@link ModelAgent} adds a model's reading
+ * on top of the same rules.
  */
 public interface Agent {
     /** Recorded as model_hash on every result, so you can tell which agent said what. */
@@ -51,6 +51,35 @@ public interface Agent {
                 pos = nl + 1;
             }
             return Tx.m("tools", new ArrayList<Object>(Arrays.asList("read_source")), "facts", facts);
+        }
+    }
+
+    /**
+     * The arbiters' rules alone, with no model: the lines PatternAgent reads,
+     * plus what the grounding rules harvest from each readable sentence
+     * ("E is a V", "E, a V", "V such as A, B"). The same rules ModelAgent runs
+     * before it asks its model, so a phone without a model still collects facts.
+     */
+    final class RulesAgent implements Agent {
+        @Override public String id() { return "rules-agent:1"; }
+
+        @Override public Map<String, Object> propose(Map<String, Object> directive, String text) {
+            Map<String, Object> p = new PatternAgent().propose(directive, text);
+            @SuppressWarnings("unchecked") List<Object> facts = (List<Object>) p.get("facts");
+            java.util.Set<String> seen = new java.util.HashSet<>();
+            for (Object o : facts) {
+                @SuppressWarnings("unchecked") Map<String, Object> f = (Map<String, Object>) o;
+                seen.add(((List<?>) f.get("ident")).get(1) + "|" + f.get("a") + "|" + f.get("v"));
+            }
+            for (int[] x : ModelAgent.readable(text, 0, text.length())) {
+                String s = text.substring(x[0], x[1]);
+                if (s.trim().startsWith("- ") && s.split("\\|", -1).length == 3) continue;   // a written fact line: PatternAgent has it
+                for (String[] h : Grounding.harvest(s))
+                    if (seen.add(h[0] + "|" + h[1] + "|" + h[2]))
+                        facts.add(Tx.m("ident", Arrays.asList("name", h[0]), "a", h[1], "v", h[2], "nu", Policy.PATTERN_NU, "by", "rules",
+                                "quote", Tx.m("start", (long) x[0], "end", (long) x[1], "text", s)));
+            }
+            return p;
         }
     }
 }

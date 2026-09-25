@@ -72,7 +72,7 @@ final class Bridge {
         if (engine == null) {
             engine = Engine.open(new SqliteBackend(activity),
                     new KeystoreSigner("dilmun-portal"), new KeystoreSigner("dilmun-steward"),
-                    Engine.SYSTEM_CLOCK, new Agent.PatternAgent());
+                    Engine.SYSTEM_CLOCK, new Agent.RulesAgent());
             // New trace events: tell the page once, and let it read everything since its last seq.
             engine.onTrace(new Runnable() {
                 @Override public void run() {
@@ -281,7 +281,7 @@ final class Bridge {
     // ------------------------------------------------------------ extraction
 
     private String extractionAgentName() {
-        return model.loaded() && model.useForExtraction() ? model.id() : new Agent.PatternAgent().id();
+        return model.loaded() && model.useForExtraction() ? model.id() : new Agent.RulesAgent().id();
     }
 
     /**
@@ -292,7 +292,7 @@ final class Bridge {
         Llama l = model.llama();
         if (l != null && model.useForExtraction())
             return new ModelAgent(l, Policy.SCHEMA_ORDER, ModelAgent.traced(engine(), sourceName, progress)).briefed(engine().notes(l.id()));
-        return new Agent.PatternAgent();
+        return new Agent.RulesAgent();
     }
 
     private String sourceName(String sourceId) {

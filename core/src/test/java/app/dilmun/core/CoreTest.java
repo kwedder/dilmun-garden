@@ -673,6 +673,38 @@ public final class CoreTest {
         check(sdCulture.contains("\"said\"") && sdCulture.contains("field of study") && sdCulture.contains("Anthropology"),
                 "a settled fact keeps what the source wrote beside its concept key, so the transform can be audited");
 
+        section("recall ranks what answers; the rules read prose without a model");
+        World rk = new World();
+        rk.src.files.put("book.md", "# Holism, a Distinctive Approach\n\n# Learning Outcomes\n\n- Define and give examples of holism.\n\n"
+                + "Holism is a distinctive method of analysis that relates the many realms of culture to each other. "
+                + "Holism is not the same as harmony in a society. "
+                + "Using holism, anthropologists ask how the economy and religion of a people might be linked. "
+                + "You'll recall the word holism from the first chapter of this book. "
+                + "Many anthropologists, such as Franz Boas and Ruth Benedict, wrote about holism in their field studies.\n");
+        rk.e = Engine.open(rk.db, rk.portal, rk.steward, rk.clock, new Agent.RulesAgent());
+        rk.e.scan(rk.src);
+        rk.e.extract("src:book.md", rk.src);
+        String rkClaims = Json.canon(rk.e.state().claims);
+        check(!rkClaims.contains("Define and give") && !rkClaims.contains("You'll recall"),
+                "a learning outcome (a task for the reader) and a sentence to the reader are not claims");
+        check(rkClaims.contains("Holism, a Distinctive Approach") && !rkClaims.contains("Learning Outcomes"),
+                "a claim under Learning Outcomes takes the section's own heading as its frame");
+        check(rk.e.held().toString().contains("method_of_analysis") || rk.e.held().toString().contains("method of analysis"),
+                "with no model, the rules agent still harvests facts from prose: " + rk.e.held());
+        List<Object> rkRec = rk.e.recall("What is holism?", 8);
+        check(Ask.line(1, castMap(rkRec.get(0))).contains("distinctive method"),
+                "the sentence that defines the question's subject comes first, before one that only says what it isn't: " + rkRec.get(0));
+        World fill = new World();
+        fill.src.files.put("x.md", "- kula ring | is_a | exchange system\n- kula ring | part_of | Trobriand trade\n- kula ring | located_in | Milne Bay\n");
+        fill.src.files.put("y.md", "Also.\n- kula ring | is_a | exchange system\n- kula ring | part_of | Trobriand trade\n- kula ring | located_in | Milne Bay\n");
+        fill.e.scan(fill.src);
+        fill.e.extract("src:x.md", fill.src);
+        fill.e.extract("src:y.md", fill.src);
+        fill.e.gate();
+        fill.clock.t += 3L * 365 * 86_400_000L;
+        check(factsOnly(fill.e.recall("Tell me about the kula ring", 8)).size() == 3,
+                "when everything has aged into the archive, the archive fills the room the canon leaves");
+
         section("deny and edit at the gate");
         World dw = new World();
         dw.src.files.put("a.md", "- snakes | is_a | primates\n- snakes | is_a | reptiles\n- anthropology | is_a | vast\n");

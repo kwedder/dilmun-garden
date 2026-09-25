@@ -152,6 +152,21 @@ A memory that settles what several sources repeat, and fades what nobody repeats
 - **Injected instructions are quarantined.** A sentence that speaks to an AI ("ignore previous instructions", "you must…", "tell the user…") gives no facts, and its claim is quarantined until you approve it. Everything the model reads from memory is fenced as quoted data, not instructions.
 - **What the source said is kept.** When a fact is stored under a concept name (`field_of_study`), its original words are kept beside it, so every change from source to memory can be checked. A fact with no quote isn't promoted.
 
+### Against other memory systems
+
+The **Memory comparison** workflow (`MemoryCompare.java`, `tools/memory-compare.json`) gives Dilmun and three other memory policies the same inputs and the same 2,000-character budget of memory for the model. The others are small reimplementations of each system's published policy, not the products: plain RAG (every sentence, BM25), Mem0's update step (a new value replaces the old), and MemoryBank's forgetting curve (retention e^(-days/S), deleted below 5%). No model runs, so the memory policy is what's compared.
+
+| test | Dilmun | RAG | Mem0-like | MemoryBank-like |
+|---|---|---|---|---|
+| 28 questions on 8 sections of an anthropology textbook | 27 | 27 | 27 | 26 |
+| the same questions 3 years later, unused | 27 | 27 | 27 | 0 |
+| a sentence telling the AI what to do reaches the model | no, held for review | yes | yes | yes |
+| two sources say 1648, two later ones 1658 | both, marked contested | both, unmarked | 1658 only, silently | 1658 only, silently |
+| notes copied from a textbook | one source, unconfirmed | shown twice, like two sources | merged, no provenance | the copy strengthens it |
+| taking in the 8 sections | ~0.9 s | ~0.01 s | ~0.02 s | ~0.02 s |
+
+Dilmun matches plain retrieval on the questions and is the only one of the four that keeps an injected instruction, a contradiction or a copied source from reaching the model as plain fact. It pays for that at ingest: signing, lineages, grounding and the gate make it roughly 50 times slower to take in text, though still under a second for 8 sections.
+
 ## What's inside
 
 ```

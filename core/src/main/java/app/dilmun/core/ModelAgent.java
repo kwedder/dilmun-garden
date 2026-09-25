@@ -189,9 +189,13 @@ public final class ModelAgent implements Agent {
                 "raw", raw, "model", llm.id());
     }
 
-    /** Headings that start a list of works rather than prose: nothing under them states a fact. */
+    /**
+     * Headings that start a list of works, or a textbook's study aids, rather than
+     * prose: nothing under them states a fact ("Define holism." is a task, not a claim).
+     */
     static final java.util.regex.Pattern REFERENCES = java.util.regex.Pattern.compile(
-            "#+\\s*(references|bibliography|works cited|sources|further reading|suggested reading|notes|footnotes|citations)\\b.*",
+            "#+\\s*(references|bibliography|works cited|sources|further readings?|suggested readings?|notes|footnotes|citations"
+            + "|critical thinking questions|review questions)\\b.*",
             java.util.regex.Pattern.CASE_INSENSITIVE);
 
     /**

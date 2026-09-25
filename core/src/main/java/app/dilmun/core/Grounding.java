@@ -567,7 +567,10 @@ public final class Grounding {
 
     /** Openings that speak to the reader or set up an example, not state a claim. */
     private static final Set<String> NOT_A_CLAIM_START = set("imagine", "consider", "think", "let", "let's", "suppose",
-            "remember", "recall", "note", "see", "look", "what", "how", "why", "which", "who", "by");
+            "remember", "recall", "note", "see", "look", "what", "how", "why", "which", "who", "by",
+            // a textbook's learning outcomes are tasks for the reader, not claims
+            "define", "identify", "explain", "distinguish", "describe", "discuss", "compare", "list", "summarize",
+            "evaluate", "analyze", "outline", "apply", "recognize", "give", "trace", "contrast", "assess");
 
     /**
      * Whether a sentence states something an agent could look up and cite: at
@@ -581,9 +584,11 @@ public final class Grounding {
         int words = 0;
         for (String t : q) {
             if (Character.isLetterOrDigit(t.charAt(0))) words++;
-            if ("you".equals(t) || "your".equals(t) || "you're".equals(t)) return false;
+            if (t.equals("you") || t.equals("your") || t.startsWith("you'") || t.startsWith("you’")) return false;
         }
-        if (words < 5 || NOT_A_CLAIM_START.contains(q.get(0))) return false;
+        String first = "";
+        for (String t : q) if (Character.isLetterOrDigit(t.charAt(0))) { first = t.toLowerCase(Locale.ROOT); break; }
+        if (words < 5 || NOT_A_CLAIM_START.contains(q.get(0)) || NOT_A_CLAIM_START.contains(first)) return false;
         return !claimConcepts(s).isEmpty();
     }
 

@@ -420,8 +420,10 @@ public final class CoreTest {
                 && !cls.toString().contains("Imagine") && !cls.toString().contains("You may"),
                 "every sentence that states something becomes a claim; questions, headings and asides to the reader don't: " + cls);
         World cw = new World();
-        cw.src.files.put("one.md", "Anthropology is the study of humanity across time and space. Holism links the economy and religion of a society.\n");
-        cw.src.files.put("two.md", "Anthropology is the study of humanity across time and space. The economy and religion of a society are linked, which anthropologists call holism.\n");
+        cw.src.files.put("one.md", "Anthropology is the study of humanity across time and space. Holism links the economy and religion of a society. "
+                + "Volcanoes erupt molten rock from deep underground chambers.\n");
+        cw.src.files.put("two.md", "Anthropology is the study of humanity across time and space. The economy and religion of a society are linked, which anthropologists call holism. "
+                + "Penguins swim quickly through freezing southern ocean waters.\n");
         cw.e.scan(cw.src);
         cw.e.extract("src:one.md", cw.src);
         cw.e.extract("src:two.md", cw.src);
@@ -437,15 +439,15 @@ public final class CoreTest {
                 Set<String> wa = Engine.words(l[0]), wb = Engine.words(l[1]);
                 wa.retainAll(wb);
                 boolean same = wa.size() >= 4;
-                return question.contains("state the same thing") == same ? "yes" : "no";
+                return same ? "yes" : "no";
             }
         };
         long logBefore = cw.e.store().size();
         Map<String, Object> rv = cw.e.review(reader, 10);
-        check(((Number) rv.get("asked")).longValue() == 1 && ((Number) rv.get("agree")).longValue() == 1 && asked.get(0).contains("Sentence A: ")
+        check(((Number) rv.get("asked")).longValue() == 1 && ((Number) rv.get("agree")).longValue() == 1 && Boolean.TRUE.equals(rv.get("controls_held")) && asked.get(0).contains("Sentence A: ")
                 && asked.get(0).contains("Answer with one word: yes or no") && asked.get(0).contains("economy")
-                && asked.get(1).contains("state different things"),
-                "the arbiters delegate a check, asked both ways: do they say the same thing, and do they say different things? " + rv);
+                && asked.get(1).contains("Sentence A: The economy") ,
+                "the arbiters delegate a check, asked in both orders of the two sentences: " + rv);
         check(cw.e.claims("holism").size() == 2 && cw.e.claims("").size() == 3,
                 "a consistent agreement counts as a second source, and both claims settle at the gate: " + cw.e.claims(""));
         String kinds = "";
@@ -464,8 +466,29 @@ public final class CoreTest {
         cw2.e.extract("src:one.md", cw2.src);
         cw2.e.extract("src:two.md", cw2.src);
         Map<String, Object> ry = cw2.e.review(yes, 10);
-        check(((Number) ry.get("inconsistent")).longValue() == 1 && cw2.e.claims("holism").isEmpty(),
-                "a verifier that says yes to both questions is inconsistent, and its yes counts for nothing: " + ry);
+        check(Boolean.FALSE.equals(ry.get("controls_held")) && cw2.e.claims("holism").isEmpty(),
+                "a verifier that says yes to everything fails the controls, and none of its yeses count: " + ry);
+        World cw8 = new World();
+        cw8.src.files.put("one.md", "Holism links the economy and religion of a society.\n");
+        cw8.src.files.put("two.md", "The economy and religion of a society are linked, which anthropologists call holism.\n");
+        cw8.e.scan(cw8.src);
+        cw8.e.extract("src:one.md", cw8.src);
+        cw8.e.extract("src:two.md", cw8.src);
+        Map<String, Object> rn = cw8.e.review(reader, 10);
+        check(((Number) rn.get("controls")).longValue() == 0 && Boolean.FALSE.equals(rn.get("controls_held")) && cw8.e.claims("holism").isEmpty(),
+                "with no control pair to ask, the arbiters can't tell a yes-sayer, so no agreement counts: " + rn);
+        Verifier flip = new Verifier() {                  // answers by position, not by meaning
+            @Override public String id() { return "model:flip"; }
+            @Override public String judge(String b, String q) { return q.startsWith("Sentence A: Holism") ? "yes" : "no"; }
+        };
+        World cw7 = new World();
+        cw7.src.files.putAll(cw.src.files);
+        cw7.e.scan(cw7.src);
+        cw7.e.extract("src:one.md", cw7.src);
+        cw7.e.extract("src:two.md", cw7.src);
+        Map<String, Object> rf = cw7.e.review(flip, 10);
+        check(((Number) rf.get("inconsistent")).longValue() == 1 && cw7.e.claims("holism").isEmpty(),
+                "a verifier whose answer changes when the sentences swap places is inconsistent, and counts for nothing: " + rf);
         Verifier waffle = new Verifier() {
             @Override public String id() { return "model:waffle"; }
             @Override public String judge(String b, String q) { return "maybe, partly"; }
@@ -478,9 +501,9 @@ public final class CoreTest {
         Map<String, Object> rw = cw4.e.review(waffle, 10);
         check(((Number) rw.get("refused")).longValue() == 1 && cw4.e.claims("holism").isEmpty(),
                 "an answer that isn't yes or no is refused, recorded, and counts for nothing");
-        Verifier agreeable = new Verifier() {             // consistent, but says "same" to everything
+        Verifier agreeable = new Verifier() {             // consistent, but says yes to everything
             @Override public String id() { return "model:agreeable"; }
-            @Override public String judge(String b, String q) { return q.contains("state the same thing") ? "yes" : "no"; }
+            @Override public String judge(String b, String q) { return "yes"; }
         };
         World cw5 = new World();
         cw5.src.files.put("one.md", cw.src.files.get("one.md") + "Volcanoes erupt molten rock from deep underground chambers.\n");
@@ -490,7 +513,7 @@ public final class CoreTest {
         cw5.e.extract("src:two.md", cw5.src);
         Map<String, Object> ra = cw5.e.review(agreeable, 10);
         check(((Number) ra.get("controls")).longValue() >= 1 && Boolean.FALSE.equals(ra.get("controls_held")) && cw5.e.claims("holism").isEmpty()
-                && Json.canon(cw5.e.state().verdicts).contains("failed a control"),
+                && Json.canon(cw5.e.state().verdicts).contains("no control held"),
                 "each review carries controls the arbiters know are no; a verifier that says yes to one has none of its yeses counted: " + ra);
         World cw6 = new World();
         cw6.src.files.putAll(cw5.src.files);

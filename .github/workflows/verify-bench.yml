@@ -34,10 +34,6 @@ jobs:
             repo: openbmb/MiniCPM5-1B-GGUF
           - name: Qwen3-1.7B
             repo: unsloth/Qwen3-1.7B-GGUF
-          - name: Qwen2.5-1.5B-Instruct
-            repo: Qwen/Qwen2.5-1.5B-Instruct-GGUF
-          - name: SmolLM2-1.7B-Instruct
-            repo: bartowski/SmolLM2-1.7B-Instruct-GGUF
           - name: LFM2-1.2B
             repo: LiquidAI/LFM2-1.2B-GGUF
     name: ${{ matrix.name }}
@@ -63,6 +59,7 @@ jobs:
           out = open(os.environ["GITHUB_OUTPUT"], "a")
           if not fs:
               print("::warning::no Q4_K_M .gguf in " + os.environ["REPO"]); out.write("file=\n"); raise SystemExit(0)
+          fs.sort(key=lambda s: len(s["rfilename"]))          # the plain file, not a variant ("...-hip-optimized")
           f = fs[0]; size = f.get("size") or (f.get("lfs") or {}).get("size") or 0
           print(f"{f['rfilename']}: {size/1e9:.2f} GB")
           if size and size >= int(os.environ["MAX_BYTES"]):

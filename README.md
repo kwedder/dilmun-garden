@@ -130,8 +130,10 @@ A claim is settled at the gate once two independent sources stand behind it:
 To judge that, the arbiters go through the held claims (**Check claims** on the Work tab). They pick pairs from different sources whose words overlap, rare words counting more, and **delegate** each check to the loaded model. Each delegation is signed into the log: the two claims, the question, the briefing it goes under, and an expiry. The model gets a short briefing and answers one word, `yes` or `no`, under an output grammar. The arbiters refuse any other answer and sign the **verdict**.
 
 A small model tends to say yes, so the arbiters guard against it:
-- **Both ways:** each pair is also asked the opposite question ("Do A and B state different things?"). Only "same: yes, different: no" is an agreement. Yes to both is inconsistent and counts for nothing.
-- **Controls:** each review includes pairs the arbiters know don't agree (different sources, no shared concept, hardly a shared word). If the model says they agree, none of its answers in that review count, and the verdicts say why.
+- **Both orders:** each pair is asked twice, with the sentences swapped. Only yes both times is an agreement; an answer that changes with the order is inconsistent and counts for nothing. (An opposite question, "do they state different things?", was tried first: every small model tested read it as "are they worded differently?".)
+- **Controls:** each review includes pairs the arbiters know don't agree (different sources, no shared concept, hardly a shared word). If the model says one agrees, or if no control could be asked, none of its agreements in that review count, and the verdicts say why.
+
+Which model to use: on a 30-pair test (`tools/verify-bench.json`, the **Verifier bench** workflow), LFM2-1.2B (0.8 GB at Q4_K_M) caught 12 of 12 real matches with 3 false agreements in 18, the best of the small models tried; MiniCPM5-1B had 4, Qwen3-1.7B 7, Qwen2.5-1.5B 9, and SmolLM2-1.7B said no to nearly everything.
 
 A counted agreement is a second source for both claims; the model never settles anything itself. Deny works on claims as on facts.
 

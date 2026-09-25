@@ -72,7 +72,7 @@ public final class ExtractEval {
             System.out.println("Review: " + rv);
             for (Map<String, Object> v : e.state().verdicts) {
                 List<Object> cs = (List<Object>) v.get("claims");
-                System.out.println("VERDICT " + Json.canon(Tx.m("answer", v.get("answer"), "same", v.get("same"), "different", v.get("different"),
+                System.out.println("VERDICT " + Json.canon(Tx.m("answer", v.get("answer"), "same", v.get("same"), "swapped", v.get("swapped"),
                         "counts", v.get("counts"), "why", v.get("why"),
                         "a", e.state().claims.get(cs.get(0)).get("text"), "b", e.state().claims.get(cs.get(1)).get("text"))));
             }

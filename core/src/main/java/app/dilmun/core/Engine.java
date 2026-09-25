@@ -881,11 +881,14 @@ public final class Engine {
         List<String[]> answers = new ArrayList<>();
         boolean controlsHeld = true;
         for (Map<String, Object> t : tasks) {                                       // the only model calls
-            String same = norm(v.judge(brief, (String) t.get("question")));
-            String differ = norm(v.judge(brief, (String) t.get("counter")));
-            answers.add(new String[]{same, differ});
-            if (Boolean.TRUE.equals(t.get("control")) && !("no".equals(same) && "yes".equals(differ))) controlsHeld = false;
+            String first = norm(v.judge(brief, (String) t.get("question")));
+            String swapped = norm(v.judge(brief, (String) t.get("swapped")));      // the same question, sentences swapped
+            answers.add(new String[]{first, swapped});
+            if (Boolean.TRUE.equals(t.get("control")) && !("no".equals(first) && "no".equals(swapped))) controlsHeld = false;
         }
+        boolean anyControl = false;                                   // no control, no way to tell a yes-sayer: nothing counts
+        for (Map<String, Object> t : tasks) if (Boolean.TRUE.equals(t.get("control"))) anyControl = true;
+        controlsHeld = controlsHeld && anyControl;
         long agree = 0, disagree = 0, inconsistent = 0, refused = 0, controls = 0;
         for (int i = 0; i < tasks.size(); i++) {
             Map<String, Object> t = tasks.get(i);
@@ -974,7 +977,7 @@ public final class Engine {
                 String id = "g:" + Crypto.H(Arrays.asList(portal, a, b, store.tip(portal))).substring(0, 24);
                 Map<String, Object> d = Tx.m("id", id, "task", "agree", "claims", new ArrayList<Object>(Arrays.asList(a, b)),
                         "about", new ArrayList<Object>(about), "question", Briefing.agree(ta, tb, about),
-                        "counter", Briefing.differ(ta, tb, about), "control", p.length > 4,
+                        "swapped", Briefing.agree(tb, ta, about), "control", p.length > 4,
                         "briefing", briefing, "verifier", verifier, "expires", nextHlc()[0] + Policy.TTL_MS);
                 commit(portalKey, portal, "delegate", "system", d, null);
                 out.add(d);
@@ -986,31 +989,37 @@ public final class Engine {
     }
 
     /**
-     * Records a verifier's two answers. The arbiters take them only as "yes" or
-     * "no", to an open delegation before its expiry, and decide what they come to:
-     * agree (same yes, different no), disagree (same no, different yes),
-     * inconsistent (anything else). An agreement counts toward the gate only if
-     * this review's controls held and the check isn't a control itself.
+     * Records a verifier's two answers to the same question, asked with the
+     * sentences in both orders. The arbiters take them only as "yes" or "no", to
+     * an open delegation before its expiry, and decide what they come to: agree
+     * (yes both ways), disagree (no both ways), inconsistent (the order changed
+     * the answer). An agreement counts toward the gate only if this review's
+     * controls held and the check isn't a control itself.
+     *
+     * (A counter-question, "do they state different things?", was tried first:
+     * every small model tested read it as "are they worded differently?", saying
+     * yes to paraphrases and no to unrelated pairs. Swapping the order tests
+     * consistency without a question they misread.)
      */
-    private synchronized String verdict(String delegation, String same, String differ, String verifier, boolean controlsHeld) {
+    private synchronized String verdict(String delegation, String same, String swapped, String verifier, boolean controlsHeld) {
         return request("record a verdict", false, () -> {
             live();
             State st = state();
             Map<String, Object> d = st.delegations.get(delegation);
             if (d == null || !portal.equals(d.get("portal"))) throw new Store.Rejected("no such open delegation");
             boolean late = nextHlc()[0] >= ((Number) d.get("expires")).longValue();
-            boolean valid = ("yes".equals(same) || "no".equals(same)) && ("yes".equals(differ) || "no".equals(differ));
+            boolean valid = ("yes".equals(same) || "no".equals(same)) && ("yes".equals(swapped) || "no".equals(swapped));
             String result = late ? "late" : !valid ? "refused"
-                    : "yes".equals(same) && "no".equals(differ) ? "agree"
-                    : "no".equals(same) && "yes".equals(differ) ? "disagree" : "inconsistent";
+                    : "yes".equals(same) && "yes".equals(swapped) ? "agree"
+                    : "no".equals(same) && "no".equals(swapped) ? "disagree" : "inconsistent";
             boolean control = Boolean.TRUE.equals(d.get("control"));
             boolean counts = "agree".equals(result) && controlsHeld && !control;
             String why = control ? "a control: the answer is known to be no"
                     : !"agree".equals(result) ? result
-                    : controlsHeld ? "counts toward the gate" : "doesn't count: the verifier failed a control in this review";
+                    : controlsHeld ? "counts toward the gate" : "doesn't count: no control held in this review";
             commit(portalKey, portal, "verdict", "system", Tx.m("delegation", delegation, "answer", result,
-                    "same", clip(same), "different", clip(differ), "verifier", verifier, "counts", counts, "why", why), null);
-            note("verdict", "Verifier: same " + clip(same) + ", different " + clip(differ) + " · " + result + " · " + why,
+                    "same", clip(same), "swapped", clip(swapped), "verifier", verifier, "counts", counts, "why", why), null);
+            note("verdict", "Verifier: " + clip(same) + ", swapped " + clip(swapped) + " · " + result + " · " + why,
                     Tx.m("answer", counts ? "yes" : "agree".equals(result) || "disagree".equals(result) ? "no" : "refused"));
             return result;
         });

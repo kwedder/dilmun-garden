@@ -99,13 +99,6 @@ public final class Briefing {
     /** The output grammar for a check: one word. */
     public static final String VERIFY_GRAMMAR = "root ::= \"yes\" | \"no\"\n";
 
-    /** The counter-question: asked beside the first, so a model that answers yes to anything is caught. */
-    public static String differ(String a, String b, List<String> about) {
-        String subject = String.join(", ", about).replace('_', ' ');
-        return "Sentence A: " + a.replace('\n', ' ') + "\nSentence B: " + b.replace('\n', ' ')
-                + "\nDo A and B state different things about " + subject + "?";
-    }
-
     /** The question for whether two claims agree. */
     public static String agree(String a, String b, List<String> about) {
         String subject = String.join(", ", about).replace('_', ' ');

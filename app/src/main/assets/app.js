@@ -3,7 +3,7 @@
 
   /* ------------------------------------------------------------ bridge */
   const B = window.Dilmun;
-  const MODEL_PAGE = "https://huggingface.co/openbmb/MiniCPM5-1B-GGUF";
+  const MODEL_PAGE = "https://huggingface.co/LiquidAI/LFM2-1.2B-GGUF";   // best of the small models tried as the arbiters' verifier
 
   function call(name) {
     const args = Array.prototype.slice.call(arguments, 1);

@@ -93,6 +93,13 @@ jobs:
           export LD_LIBRARY_PATH="$(find build/native -name '*.so*' -printf '%h\n' | sort -u | paste -sd:)"
           java -Ddilmun.llm="$PWD/$LIB" -cp build/core app.dilmun.core.VerifyBench models/*.gguf tools/verify-bench.json | tee bench.txt
 
+      - name: Answer a question with a known answer
+        if: steps.find.outputs.file != ''
+        run: |
+          LIB=$(find build/native -name 'libdilmun_llm.so' | head -1)
+          export LD_LIBRARY_PATH="$(find build/native -name '*.so*' -printf '%h\n' | sort -u | paste -sd:)"
+          java -Ddilmun.llm="$PWD/$LIB" -cp build/core app.dilmun.core.ModelSmoke models/*.gguf
+
       - name: Review real claims
         if: steps.find.outputs.file != ''
         run: |

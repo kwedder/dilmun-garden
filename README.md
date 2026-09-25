@@ -45,10 +45,10 @@ Keep `dilmun.jks` somewhere safe and out of the repository (`.gitignore` already
 
 ## Add the model
 
-The app is built around **MiniCPM5-1B** by OpenBMB, in the GGUF format that llama.cpp reads.
+The app recommends **LFM2-1.2B** by Liquid AI, in the GGUF format that llama.cpp reads. On the verifier bench it made the fewest false agreements of the small models tried (below). Any GGUF model works: MiniCPM5-1B, the earlier default, still does.
 
-1. On your phone, open the **Ask** tab and tap **Open the MiniCPM5-1B download page**. It opens in your browser; the app itself never goes online.
-2. Download one of the GGUF files. A **Q4_K_M** file is a good balance of size and quality, under 1 GB. Larger files (Q8_0) are a little better and slower.
+1. On your phone, open the **Ask** tab and tap **Open the LFM2-1.2B download page**. It opens in your browser; the app itself never goes online.
+2. Download the plain **Q4_K_M** file (`LFM2-1.2B-Q4_K_M.gguf`, about 0.7 GB), a good balance of size and quality. Larger files (Q8_0) are a little better and slower.
 3. Back on **Ask**, tap **Import model file** and pick the file from your downloads. The app:
    - checks that it's a GGUF file
    - copies it into its private storage and computes its SHA-256 fingerprint
@@ -133,7 +133,7 @@ A small model tends to say yes, so the arbiters guard against it:
 - **Both orders:** each pair is asked twice, with the sentences swapped. Only yes both times is an agreement; an answer that changes with the order is inconsistent and counts for nothing. (An opposite question, "do they state different things?", was tried first: every small model tested read it as "are they worded differently?".)
 - **Controls:** each review includes pairs the arbiters know don't agree (different sources, no shared concept, hardly a shared word). If the model says one agrees, or if no control could be asked, none of its agreements in that review count, and the verdicts say why.
 
-Which model to use: on a 30-pair test (`tools/verify-bench.json`, the **Verifier bench** workflow), LFM2-1.2B (0.8 GB at Q4_K_M) caught 12 of 12 real matches with 3 false agreements in 18, the best of the small models tried; MiniCPM5-1B had 4, Qwen3-1.7B 7, Qwen2.5-1.5B 9, and SmolLM2-1.7B said no to nearly everything.
+Which model to use: on a 30-pair test (`tools/verify-bench.json`, the **Verifier bench** workflow), asked in both orders, LFM2-1.2B (0.73 GB at Q4_K_M) caught 11 of 12 real matches with 2 false agreements in 18, the best of the small models tried; MiniCPM5-1B had 4 false agreements and Qwen3-1.7B 5. All three passed their controls. On the first question alone, Qwen2.5-1.5B made 9 false agreements, and SmolLM2-1.7B said no to nearly everything.
 
 A counted agreement is a second source for both claims; the model never settles anything itself. Deny works on claims as on facts.
 

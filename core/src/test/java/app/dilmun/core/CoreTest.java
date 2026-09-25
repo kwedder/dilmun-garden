@@ -705,6 +705,18 @@ public final class CoreTest {
         check(factsOnly(fill.e.recall("Tell me about the kula ring", 8)).size() == 3,
                 "when everything has aged into the archive, the archive fills the room the canon leaves");
 
+        World cn = new World();
+        cn.src.files.put("a.md", "The Treaty of Westphalia was signed in 1648 by the powers of Europe.\n");
+        cn.src.files.put("b.md", "Other notes. The Treaty of Westphalia was signed in 1648 by the powers of Europe.\n");
+        cn.src.files.put("c.md", "A later book. The Treaty of Westphalia was signed in 1658 by the powers of Europe.\n");
+        cn.src.files.put("d.md", "Another book. The Treaty of Westphalia was signed in 1658 by the powers of Europe.\n");
+        cn.e.scan(cn.src);
+        for (String cf : Arrays.asList("a.md", "b.md", "c.md", "d.md")) cn.e.extract("src:" + cf, cn.src);
+        cn.e.gate();
+        String cnRec = Ask.system(cn.e.recall("When was the Treaty of Westphalia signed?", 8));
+        check(cn.e.state().settledClaims.isEmpty() && cnRec.contains("contested: sources disagree on the number: 1648 / 1658"),
+                "two claims alike but for a number are contested, not settled, whatever their sources: " + cnRec);
+
         section("deny and edit at the gate");
         World dw = new World();
         dw.src.files.put("a.md", "- snakes | is_a | primates\n- snakes | is_a | reptiles\n- anthropology | is_a | vast\n");

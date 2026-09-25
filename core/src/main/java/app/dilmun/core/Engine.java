@@ -611,6 +611,7 @@ public final class Engine {
                 cs.add(new Object[]{sc + (st.settledClaims.containsKey(e.getKey()) ? 0.5 : 0), e.getKey()});
         }
         Collections.sort(cs, (x, y) -> Double.compare((Double) y[0], (Double) x[0]));
+        Map<String, String> claimConflicts = claimConflicts(st);
         long claimsIn = 0;
         long claimRoom = Math.max(RECALL_CLAIMS, limit - out.size());   // claims fill what the facts left
         for (Object[] x : cs) {
@@ -620,6 +621,7 @@ public final class Engine {
             Map<String, Object> row = Tx.m("kind", "claim", "key", id, "text", st.claims.get(id).get("text"), "status", ok ? "settled" : "held",
                     "support", (long) st.claimSupport(id).size(), "quote", "");
             if (st.claims.get(id).get("frame") != null) row.put("frame", st.claims.get(id).get("frame"));
+            if (claimConflicts.containsKey(id)) row.put("contested", claimConflicts.get(id));
             out.add(row);
             rank.put(row, (Double) x[0]);
             claimsIn++;
@@ -800,10 +802,12 @@ public final class Engine {
      */
     private long promoteClaims(State st) {
         List<Object> ready = new ArrayList<>();
+        Map<String, String> conflicts = claimConflicts(st);
         for (Map.Entry<String, Map<String, Object>> e : st.claims.entrySet()) {
             String id = e.getKey();
             if (st.settledClaims.containsKey(id) || st.denied(id)) continue;
             if (Boolean.TRUE.equals(e.getValue().get("quarantined")) && !st.approved(id)) continue;   // addresses an AI
+            if (conflicts.containsKey(id)) continue;                  // another claim gives a different number: the steward decides
             Set<String> support = st.claimSupport(id);
             boolean approved = st.approved(id);
             if (support.size() < Policy.GATE_K && !approved) continue;
@@ -932,6 +936,34 @@ public final class Engine {
             for (Map<String, Object> d : g) vals.add(Json.canon(d.get("v")));
             if (vals.size() < 2) continue;
             for (Map<String, Object> d : g) out.put(st.factKey("culture", d), "sources disagree about its " + String.valueOf(d.get("a")).replace('_', ' '));
+        }
+        for (Map.Entry<String, String> c : claimConflicts(st).entrySet()) if (!st.denied(c.getKey())) out.put(c.getKey(), c.getValue());
+        return out;
+    }
+
+    private static final java.util.regex.Pattern NUMBER = java.util.regex.Pattern.compile("\\d+(?:[.,]\\d+)*");
+
+    /**
+     * Claims that say the same thing but for a number ("signed in 1648" against
+     * "signed in 1658"): sources that disagree, by rule. Each is held as contested
+     * until the steward settles it, however many sources stand behind it.
+     */
+    static Map<String, String> claimConflicts(State st) {
+        Map<String, Map<String, String>> byShape = new HashMap<>();   // the sentence with its numbers masked -> numbers -> claim
+        for (Map.Entry<String, Map<String, Object>> e : st.claims.entrySet()) {
+            String text = String.valueOf(e.getValue().get("text")).trim().toLowerCase(Locale.ROOT);
+            java.util.regex.Matcher m = NUMBER.matcher(text);
+            StringBuilder nums = new StringBuilder();
+            while (m.find()) nums.append(m.group()).append(' ');
+            if (nums.length() == 0) continue;
+            String shape = NUMBER.matcher(text).replaceAll("#").replaceAll("\\s+", " ");
+            byShape.computeIfAbsent(shape, k -> new TreeMap<>()).put(nums.toString().trim(), e.getKey());
+        }
+        Map<String, String> out = new HashMap<>();
+        for (Map<String, String> g : byShape.values()) {
+            if (g.size() < 2) continue;
+            String why = "sources disagree on the number: " + String.join(" / ", g.keySet());
+            for (String id : g.values()) if (!st.approved(id)) out.put(id, why);
         }
         return out;
     }

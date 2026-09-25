@@ -1,0 +1,79 @@
+name: Dilmun against memory systems
+
+# Dilmun against real memory systems on the same text, questions and traps:
+# rank_bm25, Chroma (all-MiniLM-L6-v2) and mem0, raw and with its LLM
+# extracting memories. mem0's LLM is a small local model (Qwen2.5-1.5B-Instruct,
+# Q4_K_M) served by llama-server, as it would be on the phone. The text is
+# OpenStax "Introduction to Anthropology" (CC BY-NC-SA 4.0), fetched at run
+# time and never stored here. See tools/memory_bench.py.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/memory-systems.yml
+      - tools/memory_bench.py
+      - core/src/test/java/app/dilmun/core/DilmunExport.java
+
+permissions:
+  contents: read
+
+env:
+  LLAMA_TAG: b11160
+  LLM_REPO: Qwen/Qwen2.5-1.5B-Instruct-GGUF
+  LLM_FILE: qwen2.5-1.5b-instruct-q4_k_m.gguf
+
+jobs:
+  compare:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Fetch the text
+        run: |
+          git clone --depth 1 https://github.com/openstax/osbooks-introduction-anthropology "$RUNNER_TEMP/book"
+          files=""
+          for m in m00001 m00002 m00003 m00004 m00005 m00006 m00007 m00008; do files="$files $RUNNER_TEMP/book/modules/$m/index.cnxml"; done
+          python3 tools/cnxml_to_text.py text $files
+
+      - name: Dilmun takes in the text
+        run: |
+          mkdir -p build/core
+          javac -encoding UTF-8 -d build/core $(find core/src -name '*.java')
+          java -Dfile.encoding=UTF-8 -cp build/core app.dilmun.core.DilmunExport text tools/memory-compare.json dilmun.json
+
+      - name: Install the other memory systems
+        run: pip install mem0ai rank_bm25 chromadb
+
+      - name: Serve the local LLM for mem0
+        run: |
+          git clone --depth 1 --branch "$LLAMA_TAG" https://github.com/ggml-org/llama.cpp "$RUNNER_TEMP/llama.cpp"
+          cmake -S "$RUNNER_TEMP/llama.cpp" -B "$RUNNER_TEMP/srv" -DCMAKE_BUILD_TYPE=Release -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF
+          cmake --build "$RUNNER_TEMP/srv" --target llama-server -j 4
+          curl -fL --retry 3 "https://huggingface.co/$LLM_REPO/resolve/main/$LLM_FILE" -o "$RUNNER_TEMP/$LLM_FILE"
+          nohup "$RUNNER_TEMP/srv/bin/llama-server" -m "$RUNNER_TEMP/$LLM_FILE" --port 8080 -c 16384 --parallel 1 > server.log 2>&1 &
+          for i in $(seq 1 60); do curl -sf http://127.0.0.1:8080/health && break; sleep 2; done
+
+      - name: Compare
+        run: |
+          python3 tools/memory_bench.py dilmun.json text tools/memory-compare.json \
+            --llm-url http://127.0.0.1:8080/v1 --llm-model qwen2.5-1.5b --out memory-bench.json | tee compare.txt
+          { echo "## Dilmun against memory systems"; echo; cat compare.txt; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: memory-systems
+          path: |
+            memory-bench.json
+            compare.txt
+            server.log

@@ -165,10 +165,11 @@ public final class MemoryCompare {
     static final class Dilmun implements Memory {
         final CoreTest.MemSources src = new CoreTest.MemSources();
         final CoreTest.FakeClock clock = new CoreTest.FakeClock();
+        final CoreTest.MemBackend db = new CoreTest.MemBackend();
         final Engine e;
         Dilmun() {
             src.files.clear();
-            e = Engine.open(new CoreTest.MemBackend(), new Crypto.SoftSigner(), new Crypto.SoftSigner(), clock, new Agent.RulesAgent());
+            e = Engine.open(db, new Crypto.SoftSigner(), new Crypto.SoftSigner(), clock, new Agent.RulesAgent());
         }
         public String name() { return "dilmun"; }
         public void ingest(String source, String text, long now) {

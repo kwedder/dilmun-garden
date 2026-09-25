@@ -20,7 +20,8 @@ public final class Ask {
             long sup = f.get("support") instanceof Number ? ((Number) f.get("support")).longValue() : 1;
             String how = "settled".equals(f.get("status")) ? plural(sup) : "unconfirmed: " + plural(sup) + ", not yet through the gate";
             String in = f.get("frame") != null ? " (under \"" + f.get("frame") + "\")" : "";
-            return "[" + n + "] the source says" + in + ": \"" + f.get("text") + "\" (" + how + ")";
+            return "[" + n + "] the source says" + in + ": \"" + f.get("text") + "\" (" + how
+                    + (f.get("contested") != null ? "; contested: " + f.get("contested") : "") + ")";
         }
         long support = f.get("support") instanceof Number ? ((Number) f.get("support")).longValue() : 1;
         boolean held = "held".equals(f.get("status"));

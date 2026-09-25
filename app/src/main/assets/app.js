@@ -735,9 +735,11 @@
     job("review", {
       done: r => {
         b.disabled = false;
-        toast(r.asked ? "Arbiters delegated " + plural(r.asked, "check", "checks") + " · " + r.yes + " agree, " + r.no + " don't"
-          + (r.refused ? ", " + r.refused + " refused" : "") + (r.settled ? " · " + plural(r.settled, "promotion", "promotions") : "")
-          : "Nothing to check: no two sources' claims share enough concepts yet");
+        toast(!r.asked ? "Nothing to check: no two sources' claims are alike enough yet"
+          : !r.controls_held ? "The model failed a control check: none of its " + plural(r.asked, "answer", "answers") + " count this time"
+          : "Arbiters delegated " + plural(r.asked, "check", "checks") + " · " + r.agree + " agree, " + r.disagree + " don't"
+            + (r.inconsistent ? ", " + r.inconsistent + " inconsistent" : "") + (r.refused ? ", " + r.refused + " refused" : "")
+            + (r.settled ? " · " + plural(r.settled, "promotion", "promotions") : ""), !r.controls_held);
         refresh();
       },
       error: () => { b.disabled = false; }

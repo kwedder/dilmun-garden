@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Set;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Random;
@@ -428,35 +429,77 @@ public final class CoreTest {
         check(cw.e.claims("").size() == 1 && cw.e.claims("").toString().contains("study of humanity"),
                 "the same sentence in two sources settles as a claim at the gate");
         final List<String> asked = new ArrayList<>();
-        Verifier yes = new Verifier() {
+        Verifier reader = new Verifier() {                // answers by how many words the two sentences share
             @Override public String id() { return "model:fake-verifier"; }
-            @Override public String judge(String briefing, String question) { asked.add(briefing + "\n" + question); return "yes"; }
+            @Override public String judge(String briefing, String question) {
+                asked.add(briefing + "\n" + question);
+                String[] l = question.split("\n");
+                Set<String> wa = Engine.words(l[0]), wb = Engine.words(l[1]);
+                wa.retainAll(wb);
+                boolean same = wa.size() >= 4;
+                return question.contains("state the same thing") == same ? "yes" : "no";
+            }
         };
         long logBefore = cw.e.store().size();
-        Map<String, Object> rv = cw.e.review(yes, 10);
-        check(((Number) rv.get("asked")).longValue() == 1 && ((Number) rv.get("yes")).longValue() == 1 && asked.get(0).contains("Sentence A: ")
-                && asked.get(0).contains("Answer with one word: yes or no") && asked.get(0).contains("economy"),
-                "the arbiters delegate one check: do two sources' claims about the same concepts agree? " + rv);
+        Map<String, Object> rv = cw.e.review(reader, 10);
+        check(((Number) rv.get("asked")).longValue() == 1 && ((Number) rv.get("agree")).longValue() == 1 && asked.get(0).contains("Sentence A: ")
+                && asked.get(0).contains("Answer with one word: yes or no") && asked.get(0).contains("economy")
+                && asked.get(1).contains("state different things"),
+                "the arbiters delegate a check, asked both ways: do they say the same thing, and do they say different things? " + rv);
         check(cw.e.claims("holism").size() == 2 && cw.e.claims("").size() == 3,
-                "a delegated yes counts as a second source, and both claims settle at the gate: " + cw.e.claims(""));
+                "a consistent agreement counts as a second source, and both claims settle at the gate: " + cw.e.claims(""));
         String kinds = "";
         for (Map<String, Object> t : cw.e.store().valid()) kinds += Tx.kind(t) + " ";
         check(kinds.contains("delegate") && kinds.contains("verdict") && cw.e.store().size() > logBefore
-                && Json.canon(cw.e.state().verdicts).contains("model:fake-verifier"),
-                "each delegation and each verdict is signed into the log, naming the verifier");
-        check(((Number) cw.e.review(yes, 10).get("asked")).longValue() == 0, "a pair once checked is not asked again");
+                && Json.canon(cw.e.state().verdicts).contains("model:fake-verifier") && Json.canon(cw.e.state().verdicts).contains("counts toward the gate"),
+                "each delegation and each verdict is signed into the log, naming the verifier and whether it counted");
+        check(((Number) cw.e.review(reader, 10).get("asked")).longValue() == 0, "a pair once checked is not asked again");
+        Verifier yes = new Verifier() {
+            @Override public String id() { return "model:yes"; }
+            @Override public String judge(String briefing, String question) { return "yes"; }
+        };
         World cw2 = new World();
         cw2.src.files.putAll(cw.src.files);
         cw2.e.scan(cw2.src);
         cw2.e.extract("src:one.md", cw2.src);
         cw2.e.extract("src:two.md", cw2.src);
+        Map<String, Object> ry = cw2.e.review(yes, 10);
+        check(((Number) ry.get("inconsistent")).longValue() == 1 && cw2.e.claims("holism").isEmpty(),
+                "a verifier that says yes to both questions is inconsistent, and its yes counts for nothing: " + ry);
         Verifier waffle = new Verifier() {
             @Override public String id() { return "model:waffle"; }
             @Override public String judge(String b, String q) { return "maybe, partly"; }
         };
-        Map<String, Object> rw = cw2.e.review(waffle, 10);
-        check(((Number) rw.get("refused")).longValue() == 1 && cw2.e.claims("holism").isEmpty(),
+        World cw4 = new World();
+        cw4.src.files.putAll(cw.src.files);
+        cw4.e.scan(cw4.src);
+        cw4.e.extract("src:one.md", cw4.src);
+        cw4.e.extract("src:two.md", cw4.src);
+        Map<String, Object> rw = cw4.e.review(waffle, 10);
+        check(((Number) rw.get("refused")).longValue() == 1 && cw4.e.claims("holism").isEmpty(),
                 "an answer that isn't yes or no is refused, recorded, and counts for nothing");
+        Verifier agreeable = new Verifier() {             // consistent, but says "same" to everything
+            @Override public String id() { return "model:agreeable"; }
+            @Override public String judge(String b, String q) { return q.contains("state the same thing") ? "yes" : "no"; }
+        };
+        World cw5 = new World();
+        cw5.src.files.put("one.md", cw.src.files.get("one.md") + "Volcanoes erupt molten rock from deep underground chambers.\n");
+        cw5.src.files.put("two.md", cw.src.files.get("two.md") + "Penguins swim quickly through freezing southern ocean waters.\n");
+        cw5.e.scan(cw5.src);
+        cw5.e.extract("src:one.md", cw5.src);
+        cw5.e.extract("src:two.md", cw5.src);
+        Map<String, Object> ra = cw5.e.review(agreeable, 10);
+        check(((Number) ra.get("controls")).longValue() >= 1 && Boolean.FALSE.equals(ra.get("controls_held")) && cw5.e.claims("holism").isEmpty()
+                && Json.canon(cw5.e.state().verdicts).contains("failed a control"),
+                "each review carries controls the arbiters know are no; a verifier that says yes to one has none of its yeses counted: " + ra);
+        World cw6 = new World();
+        cw6.src.files.putAll(cw5.src.files);
+        cw6.e.scan(cw6.src);
+        cw6.e.extract("src:one.md", cw6.src);
+        cw6.e.extract("src:two.md", cw6.src);
+        Map<String, Object> rc = cw6.e.review(reader, 10);
+        check(Boolean.TRUE.equals(rc.get("controls_held")) && ((Number) rc.get("agree")).longValue() == 1 && cw6.e.claims("holism").size() == 2,
+                "a verifier that gets the controls right has its agreements counted: " + rc);
         List<Object> crec = cw.e.recall("What is holism in a society?", 5);
         String cline = "";
         for (int i = 0; i < crec.size(); i++) if ("claim".equals(((Map<?, ?>) crec.get(i)).get("kind"))) cline = Ask.line(i + 1, castMap(crec.get(i)));
@@ -476,7 +519,7 @@ public final class CoreTest {
                 "claims, delegations and verdicts replay from the log to the same state");
         cw.e.pause();
         boolean pausedReview = false;
-        try { cw.e.review(yes, 10); } catch (Store.Rejected x) { pausedReview = true; }
+        try { cw.e.review(reader, 10); } catch (Store.Rejected x) { pausedReview = true; }
         check(pausedReview, "a paused steward stops reviews too");
 
         section("deny and edit at the gate");

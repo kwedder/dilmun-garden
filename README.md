@@ -127,7 +127,13 @@ A claim is settled at the gate once two independent sources stand behind it:
 - two sentences from different sources are judged to say the same thing, or
 - you approve it.
 
-To judge that, the arbiters go through the held claims (**Check claims** on the Work tab). They pick pairs from different sources whose words overlap, rare words counting more, and **delegate** each check to the loaded model. Each delegation is signed into the log: the two claims, the question, the briefing it goes under, and an expiry. The model gets a short briefing and answers one word, `yes` or `no`, under an output grammar. The arbiters refuse any other answer and sign the **verdict**. A yes counts as a second source; the model never settles anything itself. Deny works on claims as on facts.
+To judge that, the arbiters go through the held claims (**Check claims** on the Work tab). They pick pairs from different sources whose words overlap, rare words counting more, and **delegate** each check to the loaded model. Each delegation is signed into the log: the two claims, the question, the briefing it goes under, and an expiry. The model gets a short briefing and answers one word, `yes` or `no`, under an output grammar. The arbiters refuse any other answer and sign the **verdict**.
+
+A small model tends to say yes, so the arbiters guard against it:
+- **Both ways:** each pair is also asked the opposite question ("Do A and B state different things?"). Only "same: yes, different: no" is an agreement. Yes to both is inconsistent and counts for nothing.
+- **Controls:** each review includes pairs the arbiters know don't agree (different sources, no shared concept, hardly a shared word). If the model says they agree, none of its answers in that review count, and the verdicts say why.
+
+A counted agreement is a second source for both claims; the model never settles anything itself. Deny works on claims as on facts.
 
 Asked a question, the model gets the matching claims beside the facts, as the source's own sentences, marked settled or unconfirmed.
 

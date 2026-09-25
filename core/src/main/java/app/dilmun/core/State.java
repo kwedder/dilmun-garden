@@ -143,7 +143,7 @@ public final class State {
                 v.put("tx", Tx.id(tx));
                 if (d != null) v.put("claims", d.get("claims"));
                 verdicts.add(v);
-                if (d != null && "yes".equals(p.get("answer"))) {
+                if (d != null && Boolean.TRUE.equals(p.get("counts"))) {             // the arbiters decided it counts
                     List<Object> cs = (List<Object>) d.get("claims");
                     String a = (String) cs.get(0), b = (String) cs.get(1);
                     agreements.computeIfAbsent(a, x -> new TreeSet<>()).add(b);
